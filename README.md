@@ -31,6 +31,9 @@ and cross-platform strategy.
   account's SSH key or token, shows progress, can be cancelled (the partial
   folder is removed), and can write the account identity into the clone's
   `.git/config`. The sidebar's ⤓ button opens it.
+- **Open a project's folder** in the system file manager (Files/Explorer/Finder)
+  from the folder icon on its sidebar row, or the **Open folder** button in the
+  header.
 - **Editable accounts.** Open the editor with the pencil in the sidebar header,
   by right-clicking an account avatar, from Settings → Accounts, or from the
   **Edit account** button on an authentication error. You can change the label,

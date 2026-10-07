@@ -96,6 +96,7 @@ export const api = {
   cloneRepository: (request: CloneRequest) => call<CloneResult>("clone_repository", { request }),
   cancelClone: (cloneId: Uuid) => call<boolean>("cancel_clone", { cloneId }),
 
+  openRepositoryFolder: (repoId: Uuid) => call<void>("open_repository_folder", { repoId }),
   fetchRemote: (repoId: Uuid, remote: string) =>
     call<FetchOutcome>("fetch_remote", { repoId, remote }),
 } as const;

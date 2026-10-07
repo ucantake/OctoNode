@@ -112,6 +112,14 @@ export default function App() {
     }
   };
 
+  const openFolder = async (id: Uuid) => {
+    try {
+      await api.openRepositoryFolder(id);
+    } catch (e) {
+      notifyError(e);
+    }
+  };
+
   const fetchRepo = async () => {
     if (!repoId) return;
     setFetching(true);
@@ -169,6 +177,7 @@ export default function App() {
         onSelectRepo={(ws, id) => void selectRepo(ws, id)}
         onAddRepository={(ws) => void addRepository(ws)}
         onCloneRepository={(ws) => setDialog({ type: "clone", workspaceId: ws })}
+        onOpenRepositoryFolder={(id) => void openFolder(id)}
         onOpenSettings={() => setDialog({ type: "settings" })}
         onCreateWorkspace={(accountId) => setDialog({ type: "workspace", accountId })}
         onAddAccount={() => setDialog({ type: "account" })}
@@ -208,6 +217,16 @@ export default function App() {
             </nav>
           )}
           <div className="ml-auto flex items-center gap-2">
+            {repo && (
+              <button
+                type="button"
+                onClick={() => void openFolder(repo.repo.id)}
+                title={`Open folder: ${repo.repo.path}`}
+                className="rounded-md border border-line px-3 py-1 text-xs text-fg-muted hover:border-accent/60 hover:text-fg"
+              >
+                Open folder
+              </button>
+            )}
             {repo && (
               <button
                 type="button"

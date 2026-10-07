@@ -19,6 +19,8 @@ tauri-build = { version = "=2.7.1", features = [] }
 # --- Shell (Tauri 2.x stable line; 3.x is alpha and intentionally NOT used) ---
 tauri = { version = "=2.12.1", features = [] }
 tauri-plugin-dialog = "=2.8.1"
+# Opens folders in the OS file manager (xdg-open / explorer / open).
+tauri-plugin-opener = "=2.7.0"
 
 # --- Git core ---
 # `vendored-libgit2` pins the exact libgit2 that git2 was tested against, so

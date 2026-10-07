@@ -18,6 +18,7 @@ export interface WorkspaceSidebarProps {
   onSelectRepo: (workspaceId: Uuid, repoId: Uuid) => void;
   onAddRepository: (workspaceId: Uuid) => void;
   onCloneRepository: (workspaceId: Uuid) => void;
+  onOpenRepositoryFolder: (repoId: Uuid) => void;
   onOpenSettings: () => void;
   onCreateWorkspace: (accountId: Uuid | null) => void;
   onAddAccount: () => void;
@@ -59,6 +60,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
     onSelectRepo,
     onAddRepository,
     onCloneRepository,
+    onOpenRepositoryFolder,
     onOpenSettings,
     onCreateWorkspace,
     onAddAccount,
@@ -165,6 +167,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
               onSelectRepo={(repoId) => onSelectRepo(ws.id, repoId)}
               onAddRepository={() => onAddRepository(ws.id)}
               onCloneRepository={() => onCloneRepository(ws.id)}
+              onOpenFolder={onOpenRepositoryFolder}
             />
           ))}
         </div>
@@ -250,6 +253,7 @@ function WorkspaceNode(props: {
   active: boolean;
   selectedRepoId: Uuid | null;
   onSelectRepo: (repoId: Uuid) => void;
+  onOpenFolder: (repoId: Uuid) => void;
   onAddRepository: () => void;
   onCloneRepository: () => void;
 }) {
@@ -321,20 +325,38 @@ function WorkspaceNode(props: {
                 {open && (
                   <ul role="group">
                     {repos.map((repo) => (
-                      <li key={repo.id} role="treeitem" aria-selected={repo.id === props.selectedRepoId}>
+                      <li
+                        key={repo.id}
+                        role="treeitem"
+                        aria-selected={repo.id === props.selectedRepoId}
+                        className={clsx(
+                          "group/repo flex items-center pr-2",
+                          repo.id === props.selectedRepoId
+                            ? "bg-accent/15 text-fg"
+                            : "text-fg-muted hover:bg-surface-2 hover:text-fg",
+                        )}
+                      >
                         <button
                           type="button"
                           title={repo.path}
                           onClick={() => props.onSelectRepo(repo.id)}
-                          className={clsx(
-                            "flex w-full items-center gap-2 py-1 pl-9 pr-3 text-left",
-                            repo.id === props.selectedRepoId
-                              ? "bg-accent/15 text-fg"
-                              : "text-fg-muted hover:bg-surface-2 hover:text-fg",
-                          )}
+                          className="flex min-w-0 flex-1 items-center gap-2 py-1 pl-9 text-left"
                         >
                           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-60" />
                           <span className="truncate">{repo.name}</span>
+                        </button>
+                        <button
+                          type="button"
+                          title={`Open folder: ${repo.path}`}
+                          aria-label={`Open ${repo.name} folder in file manager`}
+                          onClick={() => props.onOpenFolder(repo.id)}
+                          className={clsx(
+                            "shrink-0 rounded p-1 hover:bg-surface-3 hover:text-fg focus:opacity-100",
+                            // Always visible on the selected repo, on hover elsewhere.
+                            repo.id === props.selectedRepoId ? "opacity-70" : "opacity-0 group-hover/repo:opacity-70",
+                          )}
+                        >
+                          <FolderIcon />
                         </button>
                       </li>
                     ))}
@@ -346,6 +368,20 @@ function WorkspaceNode(props: {
         </div>
       )}
     </div>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+      <path
+        d="M1.75 3.5h4.2l1.5 1.5h6.8v7.75H1.75z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

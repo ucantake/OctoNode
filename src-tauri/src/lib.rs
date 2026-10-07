@@ -44,6 +44,7 @@ pub fn run() {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let paths = AppPaths::resolve()?;
             let state = AppState::initialize(paths)?;
@@ -74,6 +75,7 @@ pub fn run() {
             commands::list_remote_repositories,
             commands::clone_repository,
             commands::cancel_clone,
+            commands::open_repository_folder,
         ])
         .run(tauri::generate_context!());
 
