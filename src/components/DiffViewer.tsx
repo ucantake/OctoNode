@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
+import { ErrorAction, ErrorText } from "./ErrorText";
 import { useHotkeys } from "../hooks/useHotkeys";
 import { DEFAULT_FOLD, foldHunk, isSelectable, toSplitRows, type SplitCell } from "../lib/diffLayout";
 import { api, errorMessage, IpcError } from "../lib/ipc";
@@ -381,14 +382,15 @@ export function DiffViewer({ repoId, target, onChanged, reloadToken = 0 }: DiffV
       </div>
 
       {notice && (
-        <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200">
+        <ErrorText
+          tone="warning"
+          className="m-2"
+          action={<ErrorAction onClick={() => setNotice(null)}>Dismiss</ErrorAction>}
+        >
           {notice}
-          <button type="button" className="ml-auto opacity-70 hover:opacity-100" onClick={() => setNotice(null)}>
-            Dismiss
-          </button>
-        </div>
+        </ErrorText>
       )}
-      {error && <div className="p-4 text-sm text-rose-400">Failed to load diff: {error}</div>}
+      {error && <ErrorText className="m-3">Failed to load diff: {error}</ErrorText>}
       {result && result.files.length === 0 && (
         <div className="p-8 text-center text-sm text-fg-muted">No changes</div>
       )}

@@ -6,6 +6,7 @@ import { CloneDialog } from "./components/CloneDialog";
 import { AccountDialog, PromptDialog, VaultUnlockDialog } from "./components/Dialogs";
 import { SETTINGS_SHORTCUT, SettingsDialog } from "./components/SettingsDialog";
 import { DiffViewer } from "./components/DiffViewer";
+import { ErrorAction, ErrorText } from "./components/ErrorText";
 import { LOCAL_KEY, WorkspaceSidebar, type AccountKey } from "./components/WorkspaceSidebar";
 import { useCommitGraph } from "./hooks/useCommitGraph";
 import { useHotkeys } from "./hooks/useHotkeys";
@@ -27,7 +28,10 @@ const INDEX: DiffTarget = { type: "index" };
 export default function App() {
   const [boot, setBoot] = useState<BootstrapState | null>(null);
   const [fatal, setFatal] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; error: boolean; editAccountId?: Uuid } | null>(null);
+  // Separate from `dialog`: the account editor opens on top of Settings or
+  // the Clone dialog, which stay open underneath.
+  const [editingAccountId, setEditingAccountId] = useState<Uuid | null>(null);
   const [vaultSkipped, setVaultSkipped] = useState(false);
   const [dialog, setDialog] = useState<DialogState>(null);
 
@@ -75,10 +79,13 @@ export default function App() {
   }, [boot, repoId]);
   const account = boot?.accounts.find((a) => a.id === repo?.workspace.accountId) ?? null;
 
-  const notify = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast((t) => (t === msg ? null : t)), 5000);
+  /** Info toasts fade; error toasts stay until dismissed so they can be read and copied. */
+  const notify = (text: string, error = false) => {
+    const next = { text, error };
+    setToast(next);
+    if (!error) window.setTimeout(() => setToast((t) => (t === next ? null : t)), 5000);
   };
+  const notifyError = (e: unknown) => notify(errorMessage(e), true);
 
   const selectRepo = async (workspaceId: Uuid, id: Uuid) => {
     setRepoId(id);
@@ -88,7 +95,7 @@ export default function App() {
         await api.setActiveWorkspace(workspaceId);
         setBoot((b) => (b ? { ...b, activeWorkspaceId: workspaceId } : b));
       } catch (e) {
-        notify(errorMessage(e));
+        notifyError(e);
       }
     }
   };
@@ -101,7 +108,7 @@ export default function App() {
       await reload();
       await selectRepo(workspaceId, repoRef.id);
     } catch (e) {
-      notify(errorMessage(e));
+      notifyError(e);
     }
   };
 
@@ -114,7 +121,11 @@ export default function App() {
       graph.refresh();
     } catch (e) {
       if (e instanceof IpcError && e.kind === "vaultLocked") setVaultSkipped(false);
-      notify(errorMessage(e));
+      if (e instanceof IpcError && e.kind === "authRequired" && account) {
+        setToast({ text: e.message, error: true, editAccountId: account.id });
+      } else {
+        notifyError(e);
+      }
     } finally {
       setFetching(false);
     }
@@ -135,8 +146,8 @@ export default function App() {
 
   if (fatal) {
     return (
-      <div className="flex h-full items-center justify-center p-8 text-sm text-rose-300">
-        Failed to start: {fatal}
+      <div className="flex h-full items-center justify-center p-8">
+        <ErrorText className="max-w-xl">Failed to start: {fatal}</ErrorText>
       </div>
     );
   }
@@ -161,6 +172,7 @@ export default function App() {
         onOpenSettings={() => setDialog({ type: "settings" })}
         onCreateWorkspace={(accountId) => setDialog({ type: "workspace", accountId })}
         onAddAccount={() => setDialog({ type: "account" })}
+        onEditAccount={setEditingAccountId}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -269,15 +281,42 @@ export default function App() {
         )}
       </main>
 
-      {toast && (
-        <div className="fixed bottom-4 right-4 z-40 max-w-md rounded-lg border border-line bg-surface-2 px-4 py-2 text-sm shadow-xl">
-          {toast}
-        </div>
-      )}
+      {toast &&
+        (toast.error ? (
+          <div className="fixed bottom-4 right-4 z-40 w-[28rem] max-w-[calc(100vw-2rem)] shadow-xl">
+            <ErrorText
+              className="bg-surface-2"
+              action={
+                <>
+                  {toast.editAccountId && (
+                    <ErrorAction
+                      onClick={() => {
+                        setEditingAccountId(toast.editAccountId ?? null);
+                        setToast(null);
+                      }}
+                    >
+                      Edit account
+                    </ErrorAction>
+                  )}
+                  <ErrorAction onClick={() => setToast(null)}>Dismiss</ErrorAction>
+                </>
+              }
+            >
+              {toast.text}
+            </ErrorText>
+          </div>
+        ) : (
+          <div className="selectable fixed bottom-4 right-4 z-40 max-w-md rounded-lg border border-line bg-surface-2 px-4 py-2 text-sm shadow-xl">
+            {toast.text}
+          </div>
+        ))}
 
       {dialog?.type === "settings" && (
         <SettingsDialog
           platform={boot.platform}
+          accounts={boot.accounts}
+          onEditAccount={setEditingAccountId}
+          onAddAccount={() => setDialog({ type: "account" })}
           vaultLocked={boot.vault.locked}
           onBootChanged={applyBoot}
           onRequestUnlock={() => setVaultSkipped(false)}
@@ -293,12 +332,36 @@ export default function App() {
               workspace={ws}
               account={boot.accounts.find((a) => a.id === ws.accountId) ?? null}
               onClose={() => setDialog(null)}
+              onEditAccount={() => ws.accountId && setEditingAccountId(ws.accountId)}
               onCloned={(result) => {
                 setDialog(null);
                 notify(
                   `Cloned ${result.repository.name}${result.transport === "gitCli" ? " (via git CLI)" : ""}`,
                 );
                 void reload().then(() => selectRepo(ws.id, result.repository.id));
+              }}
+            />
+          );
+        })()}
+      {editingAccountId &&
+        (() => {
+          const acc = boot.accounts.find((a) => a.id === editingAccountId);
+          if (!acc) return null;
+          return (
+            <AccountDialog
+              key={acc.id}
+              account={acc}
+              onClose={() => setEditingAccountId(null)}
+              onSaved={(a) => {
+                setEditingAccountId(null);
+                notify(`Saved \u201c${a.label}\u201d`);
+                void reload();
+              }}
+              onDeleted={(id) => {
+                setEditingAccountId(null);
+                if (selectedAccount === id) setSelectedAccount(LOCAL_KEY);
+                notify(`Deleted \u201c${acc.label}\u201d`);
+                void reload();
               }}
             />
           );
@@ -310,7 +373,7 @@ export default function App() {
       {dialog?.type === "account" && (
         <AccountDialog
           onClose={() => setDialog(null)}
-          onCreated={(a) => {
+          onSaved={(a) => {
             setDialog(null);
             setSelectedAccount(a.id);
             void reload();

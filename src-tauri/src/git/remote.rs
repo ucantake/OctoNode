@@ -62,7 +62,9 @@ fn fetch_libgit2(ctx: &GitContext, repo_path: &Path, remote_name: &str) -> AppRe
     let mut remote = repo.find_remote(remote_name)?;
     let mut opts = ctx.fetch_options();
     // Empty refspec list = the remote's configured refspecs.
-    remote.fetch::<&str>(&[], Some(&mut opts), None)?;
+    remote
+        .fetch::<&str>(&[], Some(&mut opts), None)
+        .map_err(|e| ctx.explain(e))?;
     Ok(remote.stats().received_objects())
 }
 

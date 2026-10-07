@@ -295,7 +295,9 @@ fn clone_libgit2(
     match result {
         _ if cancel.load(Ordering::Relaxed) => Err(AppError::Cancelled),
         Ok(_) => Ok(()),
-        Err(e) => Err(e.into()),
+        // Authentication problems become AuthRequired (and are therefore
+        // never retried with the CLI, which would bypass account isolation).
+        Err(e) => Err(ctx.explain(e)),
     }
 }
 
@@ -511,5 +513,57 @@ mod tests {
         assert_eq!(err.kind(), "cancelled");
         assert!(!target.dest.exists());
         println!("mid-transfer cancel ok");
+    }
+
+    /// A private (or missing) HTTPS repository with an account that has no
+    /// token must fail as `authRequired` with an actionable message:
+    /// `OCTONODE_LIVE_PRIVATE_URL=https://github.com/<owner>/<private>.git cargo test live_private -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_private_without_token() {
+        let Ok(url) = std::env::var("OCTONODE_LIVE_PRIVATE_URL") else {
+            return;
+        };
+        let account = crate::models::Account {
+            id: Uuid::new_v4(),
+            label: "Personal GitHub".into(),
+            host: crate::models::GitHostType::GitHub,
+            api_base_url: None,
+            username: "me".into(),
+            avatar_url: None,
+            identity: crate::models::GitIdentity {
+                name: "Me".into(),
+                email: "me@example.com".into(),
+            },
+            ssh: crate::models::SshSettings::default(),
+            color: None,
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = crate::paths::AppPaths::from_dirs(
+            dir.path().join("c"),
+            dir.path().join("d"),
+            dir.path().join("x"),
+        )
+        .expect("paths");
+        let vault = crate::secrets::SecretVault::open(
+            &paths,
+            crate::secrets::SecretBackendPreference::EncryptedFile,
+        );
+        vault.unlock("unit-test-password").expect("unlock");
+        let ctx = GitContext::for_account(Some(&account), &vault).expect("ctx");
+        let target = CloneTarget::prepare(dir.path(), "private").expect("prepare");
+        let err = runtime()
+            .block_on(clone_repository(
+                ctx,
+                url,
+                &target,
+                Uuid::new_v4(),
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(|_| {}),
+            ))
+            .expect_err("must need auth");
+        println!("{}: {err}", err.kind());
+        assert_eq!(err.kind(), "authRequired");
+        assert!(!target.dest.exists());
     }
 }

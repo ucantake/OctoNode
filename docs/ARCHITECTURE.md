@@ -365,7 +365,16 @@ which WebKitGTK and WebView2 both support.
 
 - `AppError` (thiserror) covers git, io, serialization, secretStore,
   vaultLocked, invalidPassword, notFound, invalidInput, stale, unsupported,
-  remote, cancelled, process and internal errors. It serializes as `{ kind, message }`.
+  remote, authRequired, cancelled, process and internal errors. It serializes as `{ kind, message }`.
+- **Authentication errors.** The credential callback records *why* it could
+  not authenticate (`AuthProblem`: missing token, locked vault, no SSH key,
+  token host mismatch, credentials rejected). `GitContext::explain` turns the
+  generic libgit2 error into `AppError::AuthRequired`, with a message that names
+  the account and the fix. These errors are never retried with the git CLI, which
+  could pick up credentials from outside the account.
+- **Selectable errors.** The shell disables text selection. Error text opts back
+  in (`.selectable`, with the `-webkit-` prefix for WebKitGTK and WKWebView)
+  through the `ErrorText` component, which also has a Copy button.
 - The frontend wraps every rejection in `IpcError` with a typed `kind`. The UI
   reacts to specific kinds: `vaultLocked` reopens the unlock dialog, and
   `stale` reloads the diff and asks the user to retry.

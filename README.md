@@ -31,6 +31,15 @@ and cross-platform strategy.
   account's SSH key or token, shows progress, can be cancelled (the partial
   folder is removed), and can write the account identity into the clone's
   `.git/config`. The sidebar's ⤓ button opens it.
+- **Editable accounts.** Open the editor with the pencil in the sidebar header,
+  by right-clicking an account avatar, from Settings → Accounts, or from the
+  **Edit account** button on an authentication error. You can change the label,
+  host, API URL, username, author identity and SSH key, replace or remove the
+  access token and SSH passphrase, test the token, or delete the account.
+- **Actionable, copyable errors.** Authentication failures name the account and
+  the fix: "… has no access token, add one or clone over SSH". Every error
+  message can be selected and has a **Copy** button, and error toasts stay until
+  dismissed.
 - **Settings** (`Ctrl+,` / `⌘,`): change the vault's master password (it
   re-encrypts in place, so there's no restart and no lost tokens), lock the
   vault, and set the default clone folder (`~/Projects`).

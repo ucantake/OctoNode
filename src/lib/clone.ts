@@ -1,6 +1,6 @@
 // Pure helpers for the clone dialog (unit-tested).
 
-import type { CloneProgress } from "../types/models";
+import type { Account, CloneProgress } from "../types/models";
 
 /** Mirrors `folder_name_from_url` in src-tauri/src/git/clone.rs. */
 export function folderNameFromUrl(url: string): string | null {
@@ -74,4 +74,41 @@ export function describeProgress(p: CloneProgress): string {
     case "done":
       return "Done";
   }
+}
+
+/** Hostname of a clone URL (https, ssh:// or scp-like `user@host:path`). */
+export function urlHost(url: string): string | null {
+  const u = url.trim();
+  const scheme = u.indexOf("://");
+  if (scheme >= 0) {
+    const authority = u.slice(scheme + 3).split("/")[0] ?? "";
+    const host = authority.split("@").pop()?.split(":")[0] ?? "";
+    return host ? host.toLowerCase() : null;
+  }
+  const colon = u.indexOf(":");
+  if (colon <= 0) return null;
+  const host = u.slice(0, colon).split("@").pop() ?? "";
+  return host ? host.toLowerCase() : null;
+}
+
+/** Mirrors `Account::remote_host` in models.rs. */
+export function accountHost(account: Pick<Account, "host" | "apiBaseUrl">): string | null {
+  switch (account.host) {
+    case "gitHub":
+      return "github.com";
+    case "gitLabCloud":
+      return "gitlab.com";
+    case "gitLabSelfHosted":
+      try {
+        return account.apiBaseUrl ? new URL(account.apiBaseUrl).hostname.toLowerCase() : null;
+      } catch {
+        return null;
+      }
+    case "local":
+      return null;
+  }
+}
+
+export function isHttpsUrl(url: string): boolean {
+  return /^https:\/\//i.test(url.trim());
 }

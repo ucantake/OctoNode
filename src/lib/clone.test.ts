@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cloneProgressFraction, folderNameFromUrl, formatBytes, newCloneId } from "./clone";
+import { accountHost, cloneProgressFraction, folderNameFromUrl, formatBytes, newCloneId, urlHost } from "./clone";
 import type { CloneProgress } from "../types/models";
 
 const base: CloneProgress = {
@@ -50,5 +50,20 @@ describe("misc", () => {
 
   it("generates v4 UUIDs", () => {
     expect(newCloneId()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+});
+
+describe("hosts", () => {
+  it("extracts URL hosts", () => {
+    expect(urlHost("https://GitHub.com/a/b.git")).toBe("github.com");
+    expect(urlHost("ssh://git@git.corp.io:2222/g/r.git")).toBe("git.corp.io");
+    expect(urlHost("git@gitlab.com:g/r.git")).toBe("gitlab.com");
+    expect(urlHost("nonsense")).toBeNull();
+  });
+
+  it("derives account hosts", () => {
+    expect(accountHost({ host: "gitHub", apiBaseUrl: null })).toBe("github.com");
+    expect(accountHost({ host: "gitLabSelfHosted", apiBaseUrl: "https://Git.Corp.io/api/v4" })).toBe("git.corp.io");
+    expect(accountHost({ host: "local", apiBaseUrl: null })).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import clsx from "clsx";
+import { ErrorText } from "./ErrorText";
 import { Avatar } from "./Avatar";
 import type { CommitGraphSource } from "../hooks/useCommitGraph";
 import { laneColor, relativeTime } from "../lib/theme";
@@ -192,7 +193,11 @@ export function CommitGraphView({ source, selectedId, onSelect }: CommitGraphVie
   };
 
   if (error) {
-    return <div className="p-6 text-sm text-red-400">Failed to load history: {error}</div>;
+    return (
+      <div className="p-4">
+        <ErrorText>Failed to load history: {error}</ErrorText>
+      </div>
+    );
   }
 
   return (
