@@ -411,10 +411,10 @@ mod tests {
             ))
             .expect("clone");
         assert_eq!(transport, CloneTransport::Libgit2);
-        assert_eq!(
-            std::fs::read_to_string(target.dest.join("readme.md")).expect("checked out"),
-            "hello\n"
-        );
+        // Line endings follow the user's git config (Windows runners set
+        // core.autocrlf=true, giving "hello\r\n"); compare content only.
+        let readme = std::fs::read_to_string(target.dest.join("readme.md")).expect("checked out");
+        assert_eq!(readme.replace("\r\n", "\n"), "hello\n");
         assert_eq!(events.lock().expect("lock").last(), Some(&ClonePhase::Done));
     }
 
