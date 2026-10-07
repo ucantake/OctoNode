@@ -73,10 +73,9 @@ impl SecretVault {
             };
         }
 
-        let keyring = KeyringStore::new();
-        match keyring.probe() {
-            Ok(()) => {
-                tracing::info!("secret storage: OS keyring");
+        match KeyringStore::open() {
+            Ok(keyring) => {
+                tracing::info!(collection = ?keyring.target(), "secret storage: OS keyring");
                 Self {
                     backend: Mutex::new(Backend::Keyring(keyring)),
                     fallback_reason: None,

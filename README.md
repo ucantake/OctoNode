@@ -65,12 +65,40 @@ OCTONODE_BENCH_REPO=/path/to/repo cargo test --release bench_graph -- --ignored 
 npm run tauri build      # .deb/.rpm/.AppImage · .msi/.exe · .app/.dmg
 ```
 
+## Releases
+
+Push a version tag (it must match `version` in `package.json` and
+`src-tauri/tauri.conf.json`):
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` then builds a **draft** GitHub Release with:
+- Windows: `OctoNode_<ver>_x64-setup.exe` (NSIS, per-user install, no admin
+  rights needed), an `.msi`, and `OctoNode_<ver>_x64-portable.exe`
+- Linux: `.AppImage`, `.deb`, `.rpm`
+- macOS: a `.dmg` each for Apple Silicon and Intel
+
+You can also start the workflow manually from the Actions tab. Every CI run
+uploads the same installers as run artifacts.
+
+## Linux troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Gdk-Message: Error 71 (Protocol error) dispatching to Wayland display` | WebKitGTK's DMA-BUF renderer fails on some Wayland compositor and GPU combinations (NVIDIA especially). OctoNode sets `WEBKIT_DISABLE_DMABUF_RENDERER=1`, and on NVIDIA `__NV_DISABLE_EXPLICIT_SYNC=1`, unless you set them yourself. If the window still dies, run with `OCTONODE_FORCE_X11=1` to use XWayland. |
+| `Secret Service: no result found` | Your Secret Service has no `default` collection (common with KeePassXC, some KWallet setups, WSL). OctoNode then uses an existing persistent collection, preferring `login`. To choose one yourself, set `OCTONODE_KEYRING_COLLECTION=<exact label>` (labels are case-sensitive). If no collection exists, the encrypted-file vault is used instead. |
+| `DBus error … dbus-launch` | There's no D-Bus session (headless or minimal window manager). The encrypted-file vault is used instead. |
+
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
 | `OCTONODE_LOG` | Log filter, e.g. `debug` or `octonode_lib=trace` |
 | `OCTONODE_GIT` | Path to the `git` executable, e.g. a portable Git for Windows |
+| `OCTONODE_KEYRING_COLLECTION` | Linux: Secret Service collection label to store tokens in |
+| `OCTONODE_FORCE_X11` | Linux: `1` runs through XWayland (`GDK_BACKEND=x11`) |
 
 Config is stored in the platform config directory (`config.json`). The fallback
 vault is stored in the platform local-data directory (`secrets.vault`).
