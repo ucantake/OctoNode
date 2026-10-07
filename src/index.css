@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens (dark-first, Linear/Sublime Merge-like). Tailwind colors in
+   tailwind.config.js reference these, so a light theme is a token swap. */
+:root {
+  color-scheme: dark;
+  --surface-0: 11 13 18;
+  --surface-1: 17 20 27;
+  --surface-2: 24 28 37;
+  --surface-3: 33 38 50;
+  --line: 39 44 58;
+  --fg: 230 232 238;
+  --fg-muted: 140 146 163;
+  --accent: 124 92 255;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: rgb(var(--surface-0));
+  color: rgb(var(--fg));
+  /* System UI font on each OS: SF Pro, Segoe UI Variable, Cantarell/Ubuntu… */
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Desktop app feel: no rubber-band scrolling / text selection on chrome. */
+  overscroll-behavior: none;
+  user-select: none;
+}
+
+code,
+.font-mono {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono",
+    monospace;
+  user-select: text;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+}
+
+/* Thin dark scrollbars on WebKitGTK and WebView2 (WebKit on macOS overlays). */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--surface-3));
+  border: 2px solid rgb(var(--surface-0));
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
