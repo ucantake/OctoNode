@@ -39,11 +39,22 @@
       "icons/icon.ico"
     ],
     "linux": {
-      "deb": { "depends": ["git"] }
+      "deb": {
+        "depends": [
+          "git"
+        ]
+      }
     },
-    "macOS": { "minimumSystemVersion": "10.15" },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }
