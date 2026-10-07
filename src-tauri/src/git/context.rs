@@ -184,6 +184,10 @@ impl GitContext {
         opts.remote_callbacks(self.remote_callbacks());
         opts.prune(git2::FetchPrune::On);
         opts.download_tags(git2::AutotagOption::Auto);
+        // Honor http.proxy / HTTPS_PROXY like the git CLI does.
+        let mut proxy = git2::ProxyOptions::new();
+        proxy.auto();
+        opts.proxy_options(proxy);
         opts
     }
 

@@ -65,6 +65,50 @@ impl AppPaths {
     }
 }
 
+/// Default parent folder for clones: `~/Projects` (`%USERPROFILE%\Projects`
+/// on Windows).
+pub fn default_clone_dir() -> AppResult<PathBuf> {
+    directories::UserDirs::new()
+        .map(|d| d.home_dir().join("Projects"))
+        .ok_or_else(|| AppError::Internal("could not determine the home directory".into()))
+}
+
+/// Validates a single folder name chosen for a clone. Rejects separators,
+/// traversal, and names Windows cannot create (reserved device names,
+/// trailing dots/spaces, `<>:"|?*`), so a name that works on one OS works on
+/// all of them.
+pub fn validate_folder_name(name: &str) -> AppResult<()> {
+    let invalid = |why: &str| {
+        Err(AppError::InvalidInput(format!(
+            "invalid folder name {name:?}: {why}"
+        )))
+    };
+    if name.is_empty() || name == "." || name == ".." {
+        return invalid("empty or relative");
+    }
+    if name.chars().any(|c| {
+        matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*') || c.is_control()
+    }) {
+        return invalid("contains a reserved character");
+    }
+    if name.ends_with('.') || name.ends_with(' ') {
+        return invalid("ends with a dot or space");
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        return invalid("reserved on Windows");
+    }
+    Ok(())
+}
+
 /// Canonicalizes a user-supplied repository path without the Windows verbatim
 /// prefix and verifies it exists.
 pub fn canonicalize(path: &Path) -> AppResult<PathBuf> {
@@ -174,6 +218,18 @@ mod tests {
         assert!(git_relative("").is_err());
         let p = git_relative("src/main.rs").expect("valid path");
         assert_eq!(p, Path::new("src").join("main.rs"));
+    }
+
+    #[test]
+    fn folder_names_portable_across_oses() {
+        for ok in ["octonode", "my.repo", "a-b_c", "Проект"] {
+            assert!(validate_folder_name(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "", "..", "a/b", "a\\b", "con", "LPT1.txt", "x:", "trail.", "trail ",
+        ] {
+            assert!(validate_folder_name(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

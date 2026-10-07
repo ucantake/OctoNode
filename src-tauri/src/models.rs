@@ -472,3 +472,48 @@ pub struct StageRequest {
     /// Empty = whole file.
     pub hunks: Vec<HunkSelection>,
 }
+
+// ---------------------------------------------------------------------------
+// Settings & cloning
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsView {
+    /// Effective parent folder for new clones.
+    pub clone_directory: String,
+    pub clone_directory_is_default: bool,
+    pub vault: VaultStatus,
+    pub config_dir: String,
+    pub data_dir: String,
+    pub app_version: &'static str,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsInput {
+    /// `None` / empty = default (`~/Projects`).
+    pub clone_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneRequest {
+    /// Chosen by the client so it can match progress events and cancel.
+    pub clone_id: Uuid,
+    pub workspace_id: Uuid,
+    pub url: String,
+    /// Parent folder; defaults to the configured clone folder.
+    pub parent_directory: Option<String>,
+    /// Folder name; defaults to the repository name from the URL.
+    pub folder_name: Option<String>,
+    /// Write the account identity + SSH command into the clone's `.git/config`.
+    pub bind_identity: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneResult {
+    pub repository: RepositoryRef,
+    pub transport: crate::git::clone::CloneTransport,
+}

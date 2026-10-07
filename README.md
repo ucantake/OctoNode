@@ -25,6 +25,15 @@ and cross-platform strategy.
   list is virtualized and the graph is drawn on a Canvas. On rust-lang/cargo
   (24k commits), layout takes about 0.4 s in a release build, and scrolling
   stays smooth.
+- **Clone remote repositories** into a workspace, either by picking from the
+  account's GitHub/GitLab repositories (needs a token) or by pasting any
+  `https://`, `ssh://` or `git@host:path` URL. The clone uses the workspace
+  account's SSH key or token, shows progress, can be cancelled (the partial
+  folder is removed), and can write the account identity into the clone's
+  `.git/config`. The sidebar's ⤓ button opens it.
+- **Settings** (`Ctrl+,` / `⌘,`): change the vault's master password (it
+  re-encrypts in place, so there's no restart and no lost tokens), lock the
+  vault, and set the default clone folder (`~/Projects`).
 - **Diff viewer** with unified and split modes, context folding, and a full-file
   view. You can stage or unstage individual hunks and lines; checks detect a
   stale view, so an outdated selection is never written to the index.

@@ -8,22 +8,25 @@
 //! * The frontend addresses repositories by id; paths are resolved here from
 //!   the persisted workspace, never trusted from the webview.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::git::clone::{self as clone_engine, CloneProgress, CloneTarget, ProgressSink};
 use crate::git::context::GitContext;
 use crate::git::diff::{self, DiffParams, FULL_FILE_CONTEXT};
 use crate::git::graph::{self, GraphOptions};
 use crate::git::remote::{self, FetchOutcome};
 use crate::git::{self as gitcore, stage};
+use crate::hosting::{self, RemoteRepo};
 use crate::models::{
-    AccountInput, AccountView, BootstrapState, DiffResult, DiffTarget, GraphPage, RepositoryRef,
-    StageRequest, Workspace,
+    AccountInput, AccountView, BootstrapState, CloneRequest, CloneResult, DiffResult, DiffTarget,
+    GraphPage, RepositoryRef, SettingsInput, SettingsView, StageRequest, VaultStatus, Workspace,
 };
 use crate::paths;
 use crate::secrets::{ssh_passphrase_key, token_key};
@@ -142,44 +145,50 @@ pub async fn add_repository(
     path: String,
 ) -> AppResult<RepositoryRef> {
     blocking(&state, move |s| {
-        let canonical = paths::canonicalize(&PathBuf::from(path))?;
-        let repo = gitcore::open(&canonical)?;
-        let root = repo
-            .workdir()
-            .map(paths::canonicalize)
-            .transpose()?
-            .unwrap_or_else(|| canonical.clone());
-        let (organization, remote_url) = gitcore::origin_info(&repo);
-        let name = root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| paths::display(&root));
-
-        s.update_config(|c| {
-            if c.workspaces
-                .iter()
-                .flat_map(|w| &w.repositories)
-                .any(|r| r.path == root)
-            {
-                return Err(AppError::InvalidInput(format!(
-                    "{} is already part of a workspace",
-                    paths::display(&root)
-                )));
-            }
-            let repo_ref = RepositoryRef {
-                id: Uuid::new_v4(),
-                name,
-                path: root,
-                organization,
-                remote_url,
-            };
-            c.workspace_mut(workspace_id)?
-                .repositories
-                .push(repo_ref.clone());
-            Ok(repo_ref)
-        })
+        register_repository(&s, workspace_id, &PathBuf::from(path))
     })
     .await
+}
+
+/// Adds an existing repository folder to a workspace (shared by "Open" and
+/// "Clone").
+fn register_repository(s: &AppState, workspace_id: Uuid, path: &Path) -> AppResult<RepositoryRef> {
+    let canonical = paths::canonicalize(path)?;
+    let repo = gitcore::open(&canonical)?;
+    let root = repo
+        .workdir()
+        .map(paths::canonicalize)
+        .transpose()?
+        .unwrap_or_else(|| canonical.clone());
+    let (organization, remote_url) = gitcore::origin_info(&repo);
+    let name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| paths::display(&root));
+
+    s.update_config(|c| {
+        if c.workspaces
+            .iter()
+            .flat_map(|w| &w.repositories)
+            .any(|r| r.path == root)
+        {
+            return Err(AppError::InvalidInput(format!(
+                "{} is already part of a workspace",
+                paths::display(&root)
+            )));
+        }
+        let repo_ref = RepositoryRef {
+            id: Uuid::new_v4(),
+            name,
+            path: root,
+            organization,
+            remote_url,
+        };
+        c.workspace_mut(workspace_id)?
+            .repositories
+            .push(repo_ref.clone());
+        Ok(repo_ref)
+    })
 }
 
 #[tauri::command]
@@ -395,4 +404,189 @@ pub async fn fetch_remote(
     let outcome = remote::fetch(&ctx, path, remote).await?;
     state.evict_graph(repo_id)?;
     Ok(outcome)
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+fn settings_view(s: &AppState) -> AppResult<SettingsView> {
+    let configured = s.read_config(|c| Ok(c.clone_directory.clone()))?;
+    let effective = match &configured {
+        Some(p) => p.clone(),
+        None => paths::default_clone_dir()?,
+    };
+    Ok(SettingsView {
+        clone_directory: paths::display(&effective),
+        clone_directory_is_default: configured.is_none(),
+        vault: s.vault.status()?,
+        config_dir: paths::display(&s.paths.config_dir),
+        data_dir: paths::display(&s.paths.data_dir),
+        app_version: env!("CARGO_PKG_VERSION"),
+    })
+}
+
+#[tauri::command]
+pub async fn get_settings(state: AppStateArc<'_>) -> AppResult<SettingsView> {
+    blocking(&state, |s| settings_view(&s)).await
+}
+
+#[tauri::command]
+pub async fn update_settings(
+    state: AppStateArc<'_>,
+    input: SettingsInput,
+) -> AppResult<SettingsView> {
+    blocking(&state, move |s| {
+        let dir = match input.clone_directory.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(raw) => {
+                let p = PathBuf::from(raw);
+                if !p.is_absolute() {
+                    return Err(AppError::InvalidInput(format!(
+                        "clone folder must be an absolute path: {raw:?}"
+                    )));
+                }
+                Some(p)
+            }
+        };
+        s.update_config(|c| {
+            c.clone_directory = dir;
+            Ok(())
+        })?;
+        settings_view(&s)
+    })
+    .await
+}
+
+/// Re-keys the encrypted-file vault; takes effect immediately, no restart.
+#[tauri::command]
+pub async fn change_master_password(
+    state: AppStateArc<'_>,
+    current_password: String,
+    new_password: String,
+) -> AppResult<VaultStatus> {
+    let current = zeroize::Zeroizing::new(current_password);
+    let new = zeroize::Zeroizing::new(new_password);
+    blocking(&state, move |s| {
+        s.vault.change_master_password(&current, &new)?;
+        tracing::info!("master password changed");
+        s.vault.status()
+    })
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Remote repositories
+// ---------------------------------------------------------------------------
+
+/// Repositories the account can clone, from the GitHub / GitLab API.
+#[tauri::command]
+pub async fn list_remote_repositories(
+    state: AppStateArc<'_>,
+    account_id: Uuid,
+) -> AppResult<Vec<RemoteRepo>> {
+    let state = Arc::clone(state.inner());
+    let account = state.read_config(|c| c.account(account_id).cloned())?;
+    let token = state.vault.get(&token_key(account_id))?.ok_or_else(|| {
+        AppError::InvalidInput(format!(
+            "{} has no access token; add one to browse its repositories, or clone by URL",
+            account.label
+        ))
+    })?;
+    hosting::list_repositories(&account, &token).await
+}
+
+/// Clones a remote repository into the workspace, as the workspace's account.
+/// Progress is emitted as `clone-progress` events carrying `request.cloneId`.
+#[tauri::command]
+pub async fn clone_repository(
+    app: AppHandle,
+    state: AppStateArc<'_>,
+    request: CloneRequest,
+) -> AppResult<CloneResult> {
+    let state = Arc::clone(state.inner());
+    let url = request.url.trim().to_owned();
+    clone_engine::validate_remote_url(&url)?;
+
+    let (account, configured_parent) = state.read_config(|c| {
+        let ws = c
+            .workspaces
+            .iter()
+            .find(|w| w.id == request.workspace_id)
+            .ok_or_else(|| AppError::not_found("workspace", request.workspace_id))?;
+        let account = match ws.account_id {
+            Some(id) => Some(c.account(id)?.clone()),
+            None => None,
+        };
+        Ok((account, c.clone_directory.clone()))
+    })?;
+
+    let parent = match request.parent_directory.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => match configured_parent {
+            Some(p) => p,
+            None => paths::default_clone_dir()?,
+        },
+    };
+    if !parent.is_absolute() {
+        return Err(AppError::InvalidInput(
+            "the clone folder must be an absolute path".into(),
+        ));
+    }
+    let folder = match request.folder_name.as_deref().map(str::trim) {
+        Some(f) if !f.is_empty() => f.to_owned(),
+        _ => clone_engine::folder_name_from_url(&url).ok_or_else(|| {
+            AppError::InvalidInput("cannot derive a folder name from the URL; enter one".into())
+        })?,
+    };
+    let target = CloneTarget::prepare(&parent, &folder)?;
+    let ctx = GitContext::for_account(account.as_ref(), &state.vault)?;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    state.register_clone(request.clone_id, Arc::clone(&cancel))?;
+    let sink: ProgressSink = Arc::new(move |p: CloneProgress| {
+        if let Err(e) = app.emit("clone-progress", &p) {
+            tracing::debug!(error = %e, "could not emit clone progress");
+        }
+    });
+
+    let outcome = clone_engine::clone_repository(
+        ctx,
+        url,
+        &target,
+        request.clone_id,
+        Arc::clone(&cancel),
+        sink,
+    )
+    .await;
+    state.unregister_clone(request.clone_id)?;
+    let transport = outcome?;
+
+    let dest = target.dest.clone();
+    let bind = request.bind_identity && account.is_some();
+    let s = Arc::clone(&state);
+    let repository = tauri::async_runtime::spawn_blocking(move || -> AppResult<RepositoryRef> {
+        if bind {
+            GitContext::for_account(account.as_ref(), &s.vault)?.bind_repository(&dest)?;
+        }
+        register_repository(&s, request.workspace_id, &dest)
+    })
+    .await??;
+    Ok(CloneResult {
+        repository,
+        transport,
+    })
+}
+
+/// Requests cancellation of a running clone; it stops at the next progress
+/// callback and its partial folder is removed.
+#[tauri::command]
+pub async fn cancel_clone(state: AppStateArc<'_>, clone_id: Uuid) -> AppResult<bool> {
+    Ok(match state.clone_cancel_flag(clone_id)? {
+        Some(flag) => {
+            flag.store(true, Ordering::Relaxed);
+            true
+        }
+        None => false,
+    })
 }

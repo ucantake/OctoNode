@@ -1,6 +1,7 @@
 //! Git core: everything that talks to libgit2 or the `git` executable.
 
 pub mod cli;
+pub mod clone;
 pub mod context;
 pub mod diff;
 pub mod graph;

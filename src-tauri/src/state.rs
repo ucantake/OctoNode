@@ -1,12 +1,13 @@
 //! Shared application state (managed by Tauri as `Arc<AppState>`).
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 
 use uuid::Uuid;
 
 use crate::config::AppConfig;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::git::graph::CommitGraph;
 use crate::models::{AccountStatus, AccountView, BootstrapState, GitHostType, PlatformInfo};
 use crate::paths::{self, AppPaths};
@@ -18,6 +19,8 @@ pub struct AppState {
     pub vault: SecretVault,
     /// Laid-out commit graphs per repository, invalidated by ref fingerprint.
     graphs: Mutex<HashMap<Uuid, Arc<CommitGraph>>>,
+    /// Cancel flags of clones in progress, by client-chosen clone id.
+    clones: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -29,6 +32,7 @@ impl AppState {
             config: RwLock::new(config),
             vault,
             graphs: Mutex::new(HashMap::new()),
+            clones: Mutex::new(HashMap::new()),
         })
     }
 
@@ -68,6 +72,26 @@ impl AppState {
     pub fn evict_graph(&self, repo_id: Uuid) -> AppResult<()> {
         self.graphs.lock()?.remove(&repo_id);
         Ok(())
+    }
+
+    pub fn register_clone(&self, id: Uuid, cancel: Arc<AtomicBool>) -> AppResult<()> {
+        let mut clones = self.clones.lock()?;
+        if clones.contains_key(&id) {
+            return Err(AppError::InvalidInput(format!(
+                "clone {id} is already running"
+            )));
+        }
+        clones.insert(id, cancel);
+        Ok(())
+    }
+
+    pub fn unregister_clone(&self, id: Uuid) -> AppResult<()> {
+        self.clones.lock()?.remove(&id);
+        Ok(())
+    }
+
+    pub fn clone_cancel_flag(&self, id: Uuid) -> AppResult<Option<Arc<AtomicBool>>> {
+        Ok(self.clones.lock()?.get(&id).cloned())
     }
 
     pub fn account_status(&self, host: GitHostType, account_id: Uuid) -> AccountStatus {

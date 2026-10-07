@@ -131,6 +131,53 @@ impl FileStore {
         self.persist()
     }
 
+    /// Re-encrypts the vault under a new master password, without restarting
+    /// and without losing any secret. The current password is verified
+    /// against the file on disk (not just the in-memory key), a fresh salt is
+    /// generated, and the current KDF profile is applied, so changing the
+    /// password also upgrades an older vault's KDF cost. The write is atomic:
+    /// a crash leaves either the old or the new vault, never a mix.
+    pub fn change_password(&mut self, current: &str, new: &str) -> AppResult<()> {
+        let state = self.unlocked.as_ref().ok_or(AppError::VaultLocked)?;
+        if new.chars().count() < MIN_PASSWORD_LEN {
+            return Err(AppError::InvalidInput(format!(
+                "master password must be at least {MIN_PASSWORD_LEN} characters"
+            )));
+        }
+        if new == current {
+            return Err(AppError::InvalidInput(
+                "the new master password must differ from the current one".into(),
+            ));
+        }
+        // Wrong password → InvalidPassword. Also catches a vault file that was
+        // replaced on disk since unlock.
+        let on_disk = self.open_existing(current)?;
+        if on_disk.secrets.len() != state.secrets.len() {
+            return Err(AppError::Internal(
+                "vault on disk differs from the unlocked vault; unlock again".into(),
+            ));
+        }
+
+        let mut salt = vec![0u8; 16];
+        OsRng.fill_bytes(&mut salt);
+        let params = self.new_vault_params;
+        let key = derive_key(new, &salt, params)?;
+
+        let previous = self.unlocked.take().ok_or(AppError::VaultLocked)?;
+        self.unlocked = Some(Unlocked {
+            key,
+            salt,
+            params,
+            secrets: previous.secrets.clone(),
+        });
+        if let Err(e) = self.persist() {
+            // Disk still holds the old vault; keep memory consistent with it.
+            self.unlocked = Some(previous);
+            return Err(e);
+        }
+        Ok(())
+    }
+
     pub fn get(&self, key: &str) -> AppResult<Option<Secret>> {
         let state = self.unlocked.as_ref().ok_or(AppError::VaultLocked)?;
         Ok(state.secrets.get(key).cloned())
@@ -298,6 +345,41 @@ mod tests {
             .expect("get")
             .expect("present");
         assert_eq!(v.as_str(), "glpat-secret");
+
+        reopened
+            .change_password("wrong password!", "a brand new pass")
+            .expect_err("current password is verified");
+        reopened
+            .change_password("correct horse battery", "short")
+            .expect_err("new password length is enforced");
+        reopened
+            .change_password("correct horse battery", "a brand new pass")
+            .expect("change password");
+        // Still usable in-process without a restart.
+        assert_eq!(
+            reopened
+                .get("account:1:token")
+                .expect("get")
+                .expect("kept")
+                .as_str(),
+            "glpat-secret"
+        );
+        let mut fresh = FileStore::new(path.clone(), fast_params());
+        assert!(matches!(
+            fresh.unlock("correct horse battery"),
+            Err(AppError::InvalidPassword)
+        ));
+        fresh
+            .unlock("a brand new pass")
+            .expect("unlock with new password");
+        assert_eq!(
+            fresh
+                .get("account:1:token")
+                .expect("get")
+                .expect("kept")
+                .as_str(),
+            "glpat-secret"
+        );
 
         reopened.delete("account:1:token").expect("delete");
         assert!(reopened.get("account:1:token").expect("get").is_none());
