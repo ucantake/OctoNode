@@ -3,18 +3,26 @@
 // normalized into `IpcError`.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AccountInput,
   AccountView,
   AppErrorKind,
   AppErrorPayload,
   BootstrapState,
+  CloneProgress,
+  CloneRequest,
+  CloneResult,
   DiffResult,
   DiffTarget,
   FetchOutcome,
   GraphPage,
+  RemoteRepo,
   RepositoryRef,
+  SettingsInput,
+  SettingsView,
   StageRequest,
+  VaultStatus,
   Uuid,
   Workspace,
 } from "../types/models";
@@ -78,6 +86,16 @@ export const api = {
   getDiff: (repoId: Uuid, target: DiffTarget, contextLines?: number, ignoreWhitespace?: boolean) =>
     call<DiffResult>("get_diff", { repoId, target, contextLines, ignoreWhitespace }),
   stageChanges: (request: StageRequest) => call<void>("stage_changes", { request }),
+  getSettings: () => call<SettingsView>("get_settings"),
+  updateSettings: (input: SettingsInput) => call<SettingsView>("update_settings", { input }),
+  changeMasterPassword: (currentPassword: string, newPassword: string) =>
+    call<VaultStatus>("change_master_password", { currentPassword, newPassword }),
+
+  listRemoteRepositories: (accountId: Uuid) =>
+    call<RemoteRepo[]>("list_remote_repositories", { accountId }),
+  cloneRepository: (request: CloneRequest) => call<CloneResult>("clone_repository", { request }),
+  cancelClone: (cloneId: Uuid) => call<boolean>("cancel_clone", { cloneId }),
+
   fetchRemote: (repoId: Uuid, remote: string) =>
     call<FetchOutcome>("fetch_remote", { repoId, remote }),
 } as const;
@@ -85,4 +103,14 @@ export const api = {
 export function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   return String(e);
+}
+
+/** Subscribes to clone progress for one clone; returns the unsubscribe fn. */
+export function onCloneProgress(
+  cloneId: Uuid,
+  handler: (progress: CloneProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<CloneProgress>("clone-progress", (event) => {
+    if (event.payload.cloneId === cloneId) handler(event.payload);
+  });
 }

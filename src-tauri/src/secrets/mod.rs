@@ -131,6 +131,18 @@ impl SecretVault {
         }
     }
 
+    /// Changes the encrypted-file vault's master password in place.
+    pub fn change_master_password(&self, current: &str, new: &str) -> AppResult<()> {
+        let mut backend = self.backend.lock()?;
+        match &mut *backend {
+            Backend::Keyring(_) => Err(AppError::Unsupported(
+                "secrets are stored in the OS keychain, which has no OctoNode master password"
+                    .into(),
+            )),
+            Backend::File(f) => f.change_password(current, new),
+        }
+    }
+
     pub fn lock(&self) -> AppResult<()> {
         let mut backend = self.backend.lock()?;
         if let Backend::File(f) = &mut *backend {

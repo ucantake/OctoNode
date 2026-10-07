@@ -5,7 +5,8 @@
 //! * `paths`    — cross-platform directories and path conversions
 //! * `config`   — persisted, non-secret settings
 //! * `secrets`  — OS keyring with encrypted-file fallback
-//! * `git`      — libgit2 core: context isolation, graph, diff, staging, CLI
+//! * `git`      — libgit2 core: context isolation, graph, diff, staging, clone, CLI
+//! * `hosting`  — GitHub / GitLab APIs (repository listing)
 //! * `state`    — shared state and caches
 //! * `commands` — the Tauri IPC surface
 
@@ -19,6 +20,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod git;
+pub mod hosting;
 pub mod models;
 pub mod paths;
 pub mod secrets;
@@ -66,6 +68,12 @@ pub fn run() {
             commands::get_diff,
             commands::stage_changes,
             commands::fetch_remote,
+            commands::get_settings,
+            commands::update_settings,
+            commands::change_master_password,
+            commands::list_remote_repositories,
+            commands::clone_repository,
+            commands::cancel_clone,
         ])
         .run(tauri::generate_context!());
 

@@ -196,6 +196,66 @@ export interface FetchOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// Settings & cloning
+// ---------------------------------------------------------------------------
+
+export interface SettingsView {
+  /** Effective parent folder for new clones. */
+  cloneDirectory: string;
+  cloneDirectoryIsDefault: boolean;
+  vault: VaultStatus;
+  configDir: string;
+  dataDir: string;
+  appVersion: string;
+}
+
+export interface SettingsInput {
+  /** `null` / empty = default (`~/Projects`). */
+  cloneDirectory: string | null;
+}
+
+export interface RemoteRepo {
+  fullName: string;
+  name: string;
+  namespace: string;
+  description: string | null;
+  httpsUrl: string;
+  sshUrl: string;
+  webUrl: string;
+  defaultBranch: string | null;
+  private: boolean;
+  updatedAt: string | null;
+}
+
+export interface CloneRequest {
+  cloneId: Uuid;
+  workspaceId: Uuid;
+  url: string;
+  parentDirectory: string | null;
+  folderName: string | null;
+  bindIdentity: boolean;
+}
+
+export type ClonePhase = "receiving" | "resolving" | "checkout" | "fallback" | "done";
+
+export interface CloneProgress {
+  cloneId: Uuid;
+  phase: ClonePhase;
+  receivedObjects: number;
+  totalObjects: number;
+  indexedDeltas: number;
+  totalDeltas: number;
+  receivedBytes: number;
+  checkoutDone: number;
+  checkoutTotal: number;
+}
+
+export interface CloneResult {
+  repository: RepositoryRef;
+  transport: "libgit2" | "gitCli";
+}
+
+// ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
 
@@ -210,6 +270,8 @@ export type AppErrorKind =
   | "invalidInput"
   | "stale"
   | "unsupported"
+  | "remote"
+  | "cancelled"
   | "process"
   | "internal";
 

@@ -5,8 +5,11 @@ export interface ModalProps {
   onClose?: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  size?: "md" | "lg";
+  size?: "md" | "lg" | "xl";
 }
+
+/** Open dialogs, innermost last: only the topmost one reacts to Escape. */
+const stack: symbol[] = [];
 
 /**
  * Minimal accessible dialog. Native `window.prompt/confirm` are not used:
@@ -19,10 +22,17 @@ export function Modal({ title, onClose, children, footer, size = "md" }: ModalPr
   onCloseRef.current = onClose;
 
   useEffect(() => {
+    const id = Symbol("modal");
+    stack.push(id);
     const prev = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
+    // Prefer the first form field; fall back to the first button.
+    const root = ref.current;
+    (
+      root?.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea:not([disabled])") ??
+      root?.querySelector<HTMLElement>("button:not([disabled])")
+    )?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && onCloseRef.current) {
+      if (e.key === "Escape" && stack[stack.length - 1] === id && onCloseRef.current) {
         e.preventDefault();
         onCloseRef.current();
       }
@@ -30,6 +40,7 @@ export function Modal({ title, onClose, children, footer, size = "md" }: ModalPr
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      stack.splice(stack.indexOf(id), 1);
       prev?.focus();
     };
   }, []);
@@ -41,7 +52,7 @@ export function Modal({ title, onClose, children, footer, size = "md" }: ModalPr
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`w-full ${size === "lg" ? "max-w-xl" : "max-w-md"} rounded-xl border border-line bg-surface-1 shadow-2xl`}
+        className={`w-full ${size === "xl" ? "max-w-3xl" : size === "lg" ? "max-w-xl" : "max-w-md"} rounded-xl border border-line bg-surface-1 shadow-2xl`}
       >
         <header className="border-b border-line px-5 py-3 text-sm font-semibold text-fg">{title}</header>
         <div className="space-y-3 px-5 py-4 text-sm">{children}</div>
@@ -81,8 +92,8 @@ export function Button(props: {
       onClick={props.onClick}
       className={
         primary
-          ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
-          : "rounded-md px-3 py-1.5 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg"
+          ? "shrink-0 whitespace-nowrap rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90 disabled:opacity-50"
+          : "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm text-fg-muted hover:bg-surface-2 hover:text-fg"
       }
     >
       {props.children}

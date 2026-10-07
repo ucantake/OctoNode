@@ -25,6 +25,9 @@ pub struct AppConfig {
     pub active_workspace_id: Option<Uuid>,
     #[serde(default)]
     pub secret_backend: SecretBackendPreference,
+    /// Parent folder for new clones; `None` = `~/Projects`.
+    #[serde(default)]
+    pub clone_directory: Option<std::path::PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -35,6 +38,7 @@ impl Default for AppConfig {
             workspaces: Vec::new(),
             active_workspace_id: None,
             secret_backend: SecretBackendPreference::Auto,
+            clone_directory: None,
         }
     }
 }

@@ -31,6 +31,7 @@ OctoNode/
 │   │   ├── ipc.ts               # Only place that calls invoke(); typed + IpcError
 │   │   ├── platform.ts          # Mod key (Cmd/Ctrl), shortcut parse/match/format
 │   │   ├── diffLayout.ts        # Context folding + split pairing (pure, tested)
+│   │   ├── clone.ts             # Clone progress maths, folder names (pure, tested)
 │   │   └── theme.ts             # Lane palette, avatar colors, relative time
 │   ├── hooks/
 │   │   ├── useCommitGraph.ts    # Paged, generation-guarded graph loader
@@ -39,6 +40,8 @@ OctoNode/
 │       ├── WorkspaceSidebar.tsx # Account rail + workspace/org/repo tree
 │       ├── CommitGraphView.tsx  # Virtualized rows + Canvas DAG gutter
 │       ├── DiffViewer.tsx       # Unified/split, folding, hunk/line staging
+│       ├── SettingsDialog.tsx   # Master password, vault lock, clone folder
+│       ├── CloneDialog.tsx      # Browse account repos / URL, progress, cancel
 │       ├── Dialogs.tsx, Modal.tsx, Avatar.tsx
 └── src-tauri/                   # Backend (Rust)
     ├── Cargo.toml, build.rs, tauri.conf.json, capabilities/default.json
@@ -50,11 +53,13 @@ OctoNode/
         ├── config.rs            # config.json (non-secret), transactional updates
         ├── state.rs             # AppState: config, vault, graph cache
         ├── commands.rs          # Tauri IPC surface
+        ├── hosting.rs           # GitHub / GitLab repository listing
         ├── secrets/             # SecretVault → KeyringStore | FileStore
         └── git/
             ├── context.rs       # Per-account isolation (credentials, SSH, identity)
             ├── cli.rs           # `git` via tokio::process with isolation applied
             ├── remote.rs        # fetch: libgit2 first, CLI fallback
+            ├── clone.rs         # clone: progress, cancel, cleanup, CLI fallback
             ├── graph.rs         # Lane layout of the commit DAG
             ├── diff.rs          # git2 deltas → structured hunks
             ├── stage.rs         # Hunk/line (un)staging by index-blob rebuild
@@ -249,7 +254,62 @@ flowchart LR
   untracked files are also staged as whole files only.
 - The diff list is virtualized too, with fixed row heights per row type.
 
-## 6. Cross-platform strategy
+## 6. Cloning and settings
+
+### Cloning (`git/clone.rs`, `hosting.rs`)
+
+```mermaid
+sequenceDiagram
+  participant UI as CloneDialog
+  participant Cmd as clone_repository
+  participant H as hosting.rs
+  participant C as git/clone.rs
+  UI->>Cmd: list_remote_repositories(accountId)
+  Cmd->>H: GET /user/repos (GitHub) · GET /projects?membership=true (GitLab)
+  H-->>UI: RemoteRepo[] (https + ssh URLs)
+  UI->>UI: listen("clone-progress") filtered by cloneId
+  UI->>Cmd: clone_repository({cloneId, workspaceId, url, …})
+  Cmd->>C: validate URL · prepare destination · GitContext(account)
+  C-->>UI: clone-progress events (≤10/s)
+  alt libgit2 SSH limitation
+    C->>C: remove partial folder, `git clone -- url dest`
+  end
+  Cmd-->>UI: CloneResult {repository, transport}
+```
+
+- **Allowed URLs:** only `https://`, `ssh://`, `git://` and scp-like
+  `user@host:path`. `file://`, local paths, Windows drive paths, `ext::` and
+  other helper transports, and arguments starting with `-` are rejected. On the
+  CLI, `--` comes before the URL and path, so neither can be read as an option.
+- **Destination:** the folder must not exist, or must be empty. Folder names are
+  checked against Windows naming rules on every OS, so a name that works on
+  Linux won't fail on Windows.
+- **Cancel:** the libgit2 transfer callback returns `false` once the flag is
+  set. The flag is also checked before and after the transfer, because local
+  transports never call that callback. A failed or cancelled clone is always
+  removed.
+- **Proxies:** `ProxyOptions::auto()` makes libgit2 honour `http.proxy` and
+  `HTTPS_PROXY`, the same way the git CLI does. Fetch uses the same setting.
+- **Hosting API:** reqwest 0.12 with rustls on `ring` and the OS certificate
+  store, so a self-hosted GitLab behind a corporate CA works. Redirects are
+  never followed. The token header is marked sensitive, and request URLs are
+  stripped from error messages. Results come 100 per page, up to 1,000 repos.
+
+### Master password change (`secrets/file_store.rs`)
+
+1. Requires an unlocked vault. The *current* password is checked against the
+   file on disk, so a vault replaced since it was unlocked can't be re-keyed
+   blindly.
+2. Generates a fresh 16-byte salt and derives a new key with the current KDF
+   profile, which also upgrades an older vault's Argon2 cost.
+3. Re-encrypts every secret and writes the file atomically. If the write fails,
+   memory goes back to the old key, which matches what is still on disk.
+
+The vault stays unlocked throughout, so tokens keep working and nothing needs a
+restart. With the OS keychain backend there is no master password, and the
+Settings panel says so.
+
+## 7. Cross-platform strategy
 
 ### Paths
 | Rule | Where |
@@ -301,11 +361,11 @@ WebKitGTK). The UI uses only well-supported CSS: no container queries, no
 `:has()` in critical paths. Scrollbars are themed through `::-webkit-scrollbar`,
 which WebKitGTK and WebView2 both support.
 
-## 7. Error handling
+## 8. Error handling
 
 - `AppError` (thiserror) covers git, io, serialization, secretStore,
   vaultLocked, invalidPassword, notFound, invalidInput, stale, unsupported,
-  process and internal errors. It serializes as `{ kind, message }`.
+  remote, cancelled, process and internal errors. It serializes as `{ kind, message }`.
 - The frontend wraps every rejection in `IpcError` with a typed `kind`. The UI
   reacts to specific kinds: `vaultLocked` reopens the unlock dialog, and
   `stale` reloads the diff and asks the user to retry.

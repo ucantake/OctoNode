@@ -69,7 +69,7 @@ fn fetch_libgit2(ctx: &GitContext, repo_path: &Path, remote_name: &str) -> AppRe
 /// SSH transport problems (unsupported key type, ssh_config aliases, proxy
 /// commands) are what the CLI handles better. Auth failures over HTTPS are not
 /// retried: the CLI would use the very same token.
-fn should_fallback(e: &git2::Error) -> bool {
+pub(crate) fn should_fallback(e: &git2::Error) -> bool {
     matches!(e.class(), ErrorClass::Ssh) || e.message().contains("unsupported URL protocol")
 }
 

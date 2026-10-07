@@ -38,6 +38,12 @@ chacha20poly1305 = "0.10.1"
 zeroize = { version = "1.8.2", features = ["derive"] }
 base64 = "0.22.1"
 
+# --- Hosting APIs (GitHub / GitLab repository listing) ---
+# 0.12 line: rustls on `ring` (no CMake/NASM toolchain on Windows, unlike the
+# aws-lc-rs default of 0.13) and the OS certificate store, so self-hosted
+# GitLab behind a corporate CA works.
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+
 # --- Platform / filesystem ---
 directories = "6.0.0"
 dunce = "1.0.5"

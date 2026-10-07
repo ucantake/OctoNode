@@ -43,6 +43,14 @@ pub enum AppError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 
+    /// A hosting API (GitHub / GitLab) returned an error or was unreachable.
+    #[error("{0}")]
+    Remote(String),
+
+    /// The user cancelled a long-running operation.
+    #[error("operation cancelled")]
+    Cancelled,
+
     /// An external process (`git`, `ssh`) failed.
     #[error("process error: {0}")]
     Process(String),
@@ -72,6 +80,8 @@ impl AppError {
             Self::InvalidInput(_) => "invalidInput",
             Self::Stale(_) => "stale",
             Self::Unsupported(_) => "unsupported",
+            Self::Remote(_) => "remote",
+            Self::Cancelled => "cancelled",
             Self::Process(_) => "process",
             Self::Internal(_) => "internal",
         }

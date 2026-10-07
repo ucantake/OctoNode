@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
 import { CommitGraphView } from "./components/CommitGraphView";
+import { CloneDialog } from "./components/CloneDialog";
 import { AccountDialog, PromptDialog, VaultUnlockDialog } from "./components/Dialogs";
+import { SETTINGS_SHORTCUT, SettingsDialog } from "./components/SettingsDialog";
 import { DiffViewer } from "./components/DiffViewer";
 import { LOCAL_KEY, WorkspaceSidebar, type AccountKey } from "./components/WorkspaceSidebar";
 import { useCommitGraph } from "./hooks/useCommitGraph";
@@ -12,7 +14,12 @@ import { formatShortcut, setPlatform } from "./lib/platform";
 import type { BootstrapState, CommitNode, DiffTarget, Uuid } from "./types/models";
 
 type Tab = "history" | "changes";
-type DialogState = null | { type: "account" } | { type: "workspace"; accountId: Uuid | null };
+type DialogState =
+  | null
+  | { type: "account" }
+  | { type: "workspace"; accountId: Uuid | null }
+  | { type: "settings" }
+  | { type: "clone"; workspaceId: Uuid };
 
 const WORKING_TREE: DiffTarget = { type: "workingTree" };
 const INDEX: DiffTarget = { type: "index" };
@@ -119,6 +126,7 @@ export default function App() {
     "Alt+2": () => setTab("changes"),
     "Mod+Shift+F": () => void fetchRepo(),
     "Mod+R": () => (tab === "history" ? graph.refresh() : setChangesToken((t) => t + 1)),
+    [SETTINGS_SHORTCUT]: () => setDialog({ type: "settings" }),
   };
   boot?.accounts.slice(0, 9).forEach((a, i) => {
     hotkeys[`Mod+${i + 1}`] = () => setSelectedAccount(a.id);
@@ -149,6 +157,8 @@ export default function App() {
         onSelectAccount={setSelectedAccount}
         onSelectRepo={(ws, id) => void selectRepo(ws, id)}
         onAddRepository={(ws) => void addRepository(ws)}
+        onCloneRepository={(ws) => setDialog({ type: "clone", workspaceId: ws })}
+        onOpenSettings={() => setDialog({ type: "settings" })}
         onCreateWorkspace={(accountId) => setDialog({ type: "workspace", accountId })}
         onAddAccount={() => setDialog({ type: "account" })}
       />
@@ -265,6 +275,35 @@ export default function App() {
         </div>
       )}
 
+      {dialog?.type === "settings" && (
+        <SettingsDialog
+          platform={boot.platform}
+          vaultLocked={boot.vault.locked}
+          onBootChanged={applyBoot}
+          onRequestUnlock={() => setVaultSkipped(false)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.type === "clone" &&
+        (() => {
+          const ws = boot.workspaces.find((w) => w.id === dialog.workspaceId);
+          if (!ws) return null;
+          return (
+            <CloneDialog
+              workspace={ws}
+              account={boot.accounts.find((a) => a.id === ws.accountId) ?? null}
+              onClose={() => setDialog(null)}
+              onCloned={(result) => {
+                setDialog(null);
+                notify(
+                  `Cloned ${result.repository.name}${result.transport === "gitCli" ? " (via git CLI)" : ""}`,
+                );
+                void reload().then(() => selectRepo(ws.id, result.repository.id));
+              }}
+            />
+          );
+        })()}
+      {/* Last, so it stacks above Settings when opened from there. */}
       {showVault && (
         <VaultUnlockDialog vault={boot.vault} onUnlocked={applyBoot} onSkip={() => setVaultSkipped(true)} />
       )}

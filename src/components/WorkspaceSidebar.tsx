@@ -17,6 +17,8 @@ export interface WorkspaceSidebarProps {
   onSelectAccount: (key: AccountKey) => void;
   onSelectRepo: (workspaceId: Uuid, repoId: Uuid) => void;
   onAddRepository: (workspaceId: Uuid) => void;
+  onCloneRepository: (workspaceId: Uuid) => void;
+  onOpenSettings: () => void;
   onCreateWorkspace: (accountId: Uuid | null) => void;
   onAddAccount: () => void;
 }
@@ -55,6 +57,8 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
     onSelectAccount,
     onSelectRepo,
     onAddRepository,
+    onCloneRepository,
+    onOpenSettings,
     onCreateWorkspace,
     onAddAccount,
   } = props;
@@ -92,6 +96,15 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
         <RailButton title="Add account" onClick={onAddAccount}>
           <span className="text-lg leading-none text-fg-muted">+</span>
         </RailButton>
+        <RailButton title={`Settings (${formatShortcut("Mod+,")})`} onClick={onOpenSettings}>
+          <svg viewBox="0 0 20 20" className="h-4 w-4 text-fg-muted" aria-hidden>
+            <path
+              fill="currentColor"
+              d="M11.1 1.5l.4 2.1c.5.2 1 .5 1.4.8l2-.8 1.1 1.9-1.6 1.4c.1.5.1 1.1 0 1.6l1.6 1.4-1.1 1.9-2-.8c-.4.3-.9.6-1.4.8l-.4 2.1H8.9l-.4-2.1c-.5-.2-1-.5-1.4-.8l-2 .8-1.1-1.9 1.6-1.4a5 5 0 010-1.6L4 5.5l1.1-1.9 2 .8c.4-.3.9-.6 1.4-.8l.4-2.1h2.2zM10 7a2 2 0 100 4 2 2 0 000-4z"
+              transform="translate(0 1.5)"
+            />
+          </svg>
+        </RailButton>
       </nav>
 
       {/* ---- Tree ---------------------------------------------------------- */}
@@ -118,7 +131,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
             <p className="px-3 py-6 text-center text-xs text-fg-muted">
               No workspaces yet.
               <br />
-              Create one with “+”.
+              Create one with “+”, then open or clone repositories into it.
             </p>
           )}
           {visibleWorkspaces.map((ws) => (
@@ -129,6 +142,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
               selectedRepoId={selectedRepoId}
               onSelectRepo={(repoId) => onSelectRepo(ws.id, repoId)}
               onAddRepository={() => onAddRepository(ws.id)}
+              onCloneRepository={() => onCloneRepository(ws.id)}
             />
           ))}
         </div>
@@ -201,6 +215,7 @@ function WorkspaceNode(props: {
   selectedRepoId: Uuid | null;
   onSelectRepo: (repoId: Uuid) => void;
   onAddRepository: () => void;
+  onCloneRepository: () => void;
 }) {
   const { workspace } = props;
   const [expanded, setExpanded] = useState(true);
@@ -232,7 +247,19 @@ function WorkspaceNode(props: {
         </button>
         <button
           type="button"
-          title="Add repository"
+          title="Clone a remote repository"
+          aria-label="Clone a remote repository"
+          onClick={props.onCloneRepository}
+          className="rounded px-1 text-fg-muted opacity-0 hover:bg-surface-2 hover:text-fg group-hover:opacity-100 focus:opacity-100"
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+            <path d="M8 2v8m0 0l-3-3m3 3l3-3M3 13h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          title="Open a local repository"
+          aria-label="Open a local repository"
           onClick={props.onAddRepository}
           className="rounded px-1.5 text-fg-muted opacity-0 hover:bg-surface-2 hover:text-fg group-hover:opacity-100 focus:opacity-100"
         >
