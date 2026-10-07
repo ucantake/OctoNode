@@ -1,0 +1,69 @@
+[package]
+name = "octonode"
+version = "0.1.0"
+description = "OctoNode — a multi-account desktop Git client"
+authors = ["OctoNode contributors"]
+license-file = "../LICENSE"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the binary on Windows (cargo#8519).
+name = "octonode_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+# --- Shell (Tauri 2.x stable line; 3.x is alpha and intentionally NOT used) ---
+tauri = { version = "=2.12.1", features = [] }
+tauri-plugin-dialog = "=2.8.1"
+
+# --- Git core ---
+# `vendored-libgit2` pins the exact libgit2 that git2 was tested against, so
+# Linux/Windows/macOS behave identically regardless of the system libgit2.
+git2 = { version = "0.20.4", features = ["vendored-libgit2"] }
+
+# --- Secrets ---
+# keyring 3.6 is the long-lived, widely deployed major. Platform features are
+# no-ops on the other OSes, so one feature set works everywhere:
+#   macOS   -> Keychain            (apple-native)
+#   Windows -> Credential Manager  (windows-native)
+#   Linux   -> Secret Service/D-Bus (sync-secret-service + crypto-rust)
+keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+# Fallback vault: Argon2id KDF + XChaCha20-Poly1305 AEAD (RustCrypto, audited).
+argon2 = "0.5.3"
+chacha20poly1305 = "0.10.1"
+zeroize = { version = "1.8.2", features = ["derive"] }
+base64 = "0.22.1"
+
+# --- Platform / filesystem ---
+directories = "6.0.0"
+dunce = "1.0.5"
+
+# --- Runtime / serialization / diagnostics ---
+tokio = { version = "1.53", features = ["process", "io-util", "time", "macros", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+uuid = { version = "1.27", features = ["v4", "serde"] }
+url = "2.5"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.27"
+
+# The vault KDF is deliberately expensive; unoptimized it takes seconds in dev.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "unwind"
+strip = true
