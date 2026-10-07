@@ -21,6 +21,7 @@ export interface WorkspaceSidebarProps {
   onOpenSettings: () => void;
   onCreateWorkspace: (accountId: Uuid | null) => void;
   onAddAccount: () => void;
+  onEditAccount: (accountId: Uuid) => void;
 }
 
 const HOST_LABEL: Record<GitHostType, string> = {
@@ -61,6 +62,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
     onOpenSettings,
     onCreateWorkspace,
     onAddAccount,
+    onEditAccount,
   } = props;
 
   const visibleWorkspaces = useMemo(
@@ -83,6 +85,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
             active={account.id === selectedAccount}
             shortcut={i < 9 ? formatShortcut(`Mod+${i + 1}`) : undefined}
             onClick={() => onSelectAccount(account.id)}
+            onEdit={() => onEditAccount(account.id)}
           />
         ))}
         <RailButton
@@ -116,6 +119,25 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
               {current ? `${HOST_LABEL[current.host]} · ${current.identity.email}` : "Your git config & ssh-agent"}
             </div>
           </div>
+          {current && (
+            <button
+              type="button"
+              className="rounded px-1 py-0.5 text-fg-muted hover:bg-surface-2 hover:text-fg"
+              title="Edit account (token, SSH key, identity)"
+              aria-label="Edit account"
+              onClick={() => onEditAccount(current.id)}
+            >
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden>
+                <path
+                  d="M11.5 2.5l2 2L6 12H4v-2l7.5-7.5z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          )}
           <button
             type="button"
             className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-surface-2 hover:text-fg"
@@ -155,6 +177,7 @@ function RailButton(props: {
   active?: boolean;
   title: string;
   onClick: () => void;
+  onContextMenu?: () => void;
   children: ReactNode;
 }) {
   return (
@@ -164,6 +187,13 @@ function RailButton(props: {
       aria-label={props.title}
       aria-pressed={props.active}
       onClick={props.onClick}
+      onContextMenu={
+        props.onContextMenu &&
+        ((e) => {
+          e.preventDefault();
+          props.onContextMenu?.();
+        })
+      }
       className={clsx(
         "relative flex h-9 w-9 items-center justify-center rounded-xl transition-colors",
         props.active ? "bg-surface-3 ring-1 ring-accent/60" : "hover:bg-surface-2",
@@ -180,6 +210,7 @@ function AccountButton(props: {
   active: boolean;
   shortcut?: string;
   onClick: () => void;
+  onEdit: () => void;
 }) {
   const { account } = props;
   const status = STATUS_STYLE[account.status];
@@ -187,7 +218,12 @@ function AccountButton(props: {
     .filter(Boolean)
     .join(" · ");
   return (
-    <RailButton active={props.active} title={title} onClick={props.onClick}>
+    <RailButton
+      active={props.active}
+      title={`${title} · right-click to edit`}
+      onClick={props.onClick}
+      onContextMenu={props.onEdit}
+    >
       <Avatar
         name={account.label}
         seed={account.color ?? account.identity.email}

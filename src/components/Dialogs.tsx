@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { ErrorText } from "./ErrorText";
 import { Button, Field, inputClass, Modal } from "./Modal";
 import { api, errorMessage } from "../lib/ipc";
 import type { AccountInput, AccountView, BootstrapState, GitHostType, VaultStatus } from "../types/models";
@@ -80,7 +81,7 @@ export function VaultUnlockDialog(props: {
           </Field>
         )}
       </form>
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
     </Modal>
   );
 }
@@ -96,20 +97,44 @@ const HOSTS: Array<[GitHostType, string]> = [
   ["local", "Local only"],
 ];
 
-export function AccountDialog(props: { onCreated: (a: AccountView) => void; onClose: () => void }) {
-  const [form, setForm] = useState<AccountInput>({
-    label: "",
-    host: "gitHub",
-    apiBaseUrl: null,
-    username: "",
-    avatarUrl: null,
-    identity: { name: "", email: "" },
-    ssh: { privateKeyPath: null, useAgent: true },
-    color: null,
+type SecretEdit = "keep" | "replace" | "remove";
+
+export interface AccountDialogProps {
+  /** Present = edit this saved account; absent = create a new one. */
+  account?: AccountView;
+  onSaved: (a: AccountView) => void;
+  onDeleted?: (id: string) => void;
+  onClose: () => void;
+}
+
+const EMPTY_ACCOUNT: AccountInput = {
+  label: "",
+  host: "gitHub",
+  apiBaseUrl: null,
+  username: "",
+  avatarUrl: null,
+  identity: { name: "", email: "" },
+  ssh: { privateKeyPath: null, useAgent: true },
+  color: null,
+};
+
+/** Create or edit a saved account (connection), including its secrets. */
+export function AccountDialog({ account, onSaved, onDeleted, onClose }: AccountDialogProps) {
+  const editing = account !== undefined;
+  const [form, setForm] = useState<AccountInput>(() => {
+    if (!account) return EMPTY_ACCOUNT;
+    const { id: _id, status: _status, ...input } = account;
+    return input;
   });
+  const hasStoredToken = account?.status === "ready" && account.host !== "local";
+  const [tokenEdit, setTokenEdit] = useState<SecretEdit>(hasStoredToken ? "keep" : "replace");
   const [token, setToken] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [clearPassphrase, setClearPassphrase] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
 
   const set = <K extends keyof AccountInput>(key: K, value: AccountInput[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -124,20 +149,32 @@ export function AccountDialog(props: { onCreated: (a: AccountView) => void; onCl
     setBusy(true);
     setError(null);
     try {
+      const username = form.username.trim();
       const input: AccountInput = {
         ...form,
         apiBaseUrl: form.host === "gitLabSelfHosted" ? form.apiBaseUrl : null,
         // GitHub serves avatars by username; GitLab needs an API call (later).
         avatarUrl:
-          form.host === "gitHub" && form.username.trim()
-            ? `https://avatars.githubusercontent.com/${encodeURIComponent(form.username.trim())}?s=64`
+          form.host === "gitHub" && username
+            ? `https://avatars.githubusercontent.com/${encodeURIComponent(username)}?s=64`
             : null,
       };
-      let account = await api.createAccount(input);
-      if (token.trim() && form.host !== "local") {
-        account = await api.setAccountSecret(account.id, "token", token);
+      let saved = account ? await api.updateAccount(account.id, input) : await api.createAccount(input);
+
+      // Secrets are written separately and only when changed.
+      if (form.host !== "local") {
+        if (tokenEdit === "replace" && token.trim()) {
+          saved = await api.setAccountSecret(saved.id, "token", token);
+        } else if (tokenEdit === "remove") {
+          saved = await api.setAccountSecret(saved.id, "token", null);
+        }
       }
-      props.onCreated(account);
+      if (passphrase) {
+        saved = await api.setAccountSecret(saved.id, "sshPassphrase", passphrase);
+      } else if (clearPassphrase) {
+        saved = await api.setAccountSecret(saved.id, "sshPassphrase", null);
+      }
+      onSaved(saved);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -145,25 +182,83 @@ export function AccountDialog(props: { onCreated: (a: AccountView) => void; onCl
     }
   };
 
+  const testToken = async () => {
+    if (!account) return;
+    setTest(null);
+    try {
+      const repos = await api.listRemoteRepositories(account.id);
+      setTest({ ok: true, text: `Token works: ${repos.length} repositories visible.` });
+    } catch (err) {
+      setTest({ ok: false, text: errorMessage(err) });
+    }
+  };
+
+  const remove = async () => {
+    if (!account) return;
+    setBusy(true);
+    try {
+      await api.deleteAccount(account.id);
+      onDeleted?.(account.id);
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  };
+
+  const tokenDirty = tokenEdit !== "keep";
+
   return (
     <Modal
-      title="Add account"
+      title={editing ? `Edit account \u201c${account.label}\u201d` : "Add account"}
       size="lg"
-      onClose={props.onClose}
+      onClose={onClose}
       footer={
         <>
-          <Button kind="ghost" onClick={props.onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" form="account-form" disabled={busy}>
-            {busy ? "Saving…" : "Add account"}
-          </Button>
+          {editing && (
+            <div className="mr-auto">
+              {confirmDelete ? (
+                <span className="flex items-center gap-2 text-xs text-rose-300">
+                  Delete this account and its stored secrets? Its workspaces stay, unbound.
+                  <Button kind="ghost" onClick={() => setConfirmDelete(false)}>
+                    Keep
+                  </Button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void remove()}
+                    className="rounded-md bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-500"
+                  >
+                    Delete
+                  </button>
+                </span>
+              ) : (
+                <Button kind="ghost" onClick={() => setConfirmDelete(true)}>
+                  Delete account…
+                </Button>
+              )}
+            </div>
+          )}
+          {!confirmDelete && (
+            <>
+              <Button kind="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" form="account-form" disabled={busy}>
+                {busy ? "Saving…" : editing ? "Save changes" : "Add account"}
+              </Button>
+            </>
+          )}
         </>
       }
     >
       <form id="account-form" onSubmit={submit} className="grid grid-cols-2 gap-3">
         <Field label="Label">
-          <input className={inputClass} placeholder="Work GitLab" value={form.label} onChange={(e) => set("label", e.target.value)} />
+          <input
+            className={inputClass}
+            placeholder="Work GitLab"
+            value={form.label}
+            onChange={(e) => set("label", e.target.value)}
+          />
         </Field>
         <Field label="Host">
           <select className={inputClass} value={form.host} onChange={(e) => set("host", e.target.value as GitHostType)}>
@@ -189,14 +284,50 @@ export function AccountDialog(props: { onCreated: (a: AccountView) => void; onCl
           <input className={inputClass} value={form.username} onChange={(e) => set("username", e.target.value)} />
         </Field>
         {form.host !== "local" ? (
-          <Field label="Access token">
-            <input
-              type="password"
-              autoComplete="off"
-              className={inputClass}
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-            />
+          <Field
+            label="Access token"
+            hint={
+              form.host === "gitHub"
+                ? "Needed for private repos over HTTPS and for browsing. Scope: repo."
+                : "Needed for private repos over HTTPS and for browsing. Scopes: read_api, read_repository (write_repository to push)."
+            }
+          >
+            {tokenEdit === "keep" ? (
+              <div className="flex items-center gap-2">
+                <span className="flex-1 truncate rounded-md border border-line bg-surface-0 px-2.5 py-1.5 text-sm text-emerald-300">
+                  ●●●●●●●● stored
+                </span>
+                <Button kind="ghost" onClick={() => setTokenEdit("replace")}>
+                  Replace
+                </Button>
+                <Button kind="ghost" onClick={() => setTokenEdit("remove")}>
+                  Remove
+                </Button>
+              </div>
+            ) : tokenEdit === "remove" ? (
+              <div className="flex items-center gap-2">
+                <span className="flex-1 text-xs text-amber-300">The stored token will be deleted on save.</span>
+                <Button kind="ghost" onClick={() => setTokenEdit("keep")}>
+                  Undo
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  className={inputClass}
+                  placeholder={hasStoredToken ? "New token" : "Paste a personal access token"}
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                />
+                {hasStoredToken && (
+                  <Button kind="ghost" onClick={() => setTokenEdit("keep")}>
+                    Undo
+                  </Button>
+                )}
+              </div>
+            )}
           </Field>
         ) : (
           <div />
@@ -222,7 +353,8 @@ export function AccountDialog(props: { onCreated: (a: AccountView) => void; onCl
               <input
                 className={inputClass}
                 value={form.ssh.privateKeyPath ?? ""}
-                placeholder="Use ssh-agent"
+                placeholder={form.ssh.useAgent ? "Use ssh-agent" : "No SSH key"}
+                spellCheck={false}
                 onChange={(e) => set("ssh", { ...form.ssh, privateKeyPath: e.target.value || null })}
               />
               <Button kind="ghost" onClick={() => void pickKey()}>
@@ -231,8 +363,60 @@ export function AccountDialog(props: { onCreated: (a: AccountView) => void; onCl
             </div>
           </Field>
         </div>
+        <Field label="SSH key passphrase" hint={editing ? "Leave empty to keep the stored one." : "Only for encrypted keys."}>
+          <input
+            type="password"
+            autoComplete="off"
+            className={inputClass}
+            value={passphrase}
+            onChange={(e) => {
+              setPassphrase(e.target.value);
+              if (e.target.value) setClearPassphrase(false);
+            }}
+          />
+        </Field>
+        <div className="flex flex-col justify-end gap-1.5 pb-1 text-xs text-fg-muted">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.ssh.useAgent}
+              onChange={(e) => set("ssh", { ...form.ssh, useAgent: e.target.checked })}
+            />
+            Fall back to ssh-agent when no key is set
+          </label>
+          {editing && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={clearPassphrase}
+                disabled={passphrase.length > 0}
+                onChange={(e) => setClearPassphrase(e.target.checked)}
+              />
+              Remove stored passphrase
+            </label>
+          )}
+        </div>
       </form>
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+
+      {editing && form.host !== "local" && (
+        <div className="flex items-center gap-2">
+          <Button kind="ghost" disabled={tokenDirty || !hasStoredToken} onClick={() => void testToken()}>
+            Test token
+          </Button>
+          {tokenDirty && <span className="text-[11px] text-fg-muted">Save first to test the new token.</span>}
+          {!tokenDirty && !hasStoredToken && <span className="text-[11px] text-fg-muted">No token stored.</span>}
+          {test && (
+            <span className="min-w-0 flex-1">
+              {test.ok ? (
+                <span className="text-xs text-emerald-400">{test.text}</span>
+              ) : (
+                <ErrorText>{test.text}</ErrorText>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+      {error && <ErrorText>{error}</ErrorText>}
     </Modal>
   );
 }
@@ -278,7 +462,7 @@ export function PromptDialog(props: {
           <input className={inputClass} value={value} onChange={(e) => setValue(e.target.value)} />
         </Field>
       </form>
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {error && <ErrorText>{error}</ErrorText>}
     </Modal>
   );
 }

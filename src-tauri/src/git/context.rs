@@ -17,6 +17,7 @@
 
 use std::cell::Cell;
 use std::path::Path;
+use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
@@ -33,8 +34,33 @@ use crate::secrets::{ssh_passphrase_key, token_key, Secret, SecretVault};
 /// Without a cap, a wrong key loops forever.
 const MAX_AUTH_ATTEMPTS: usize = 3;
 
+/// Why the credential callback could not authenticate. Recorded so the error
+/// shown to the user names the account and the fix, instead of libgit2's
+/// generic "authentication failed".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthProblem {
+    MissingToken {
+        url: String,
+    },
+    VaultLocked {
+        url: String,
+    },
+    NoSshKey {
+        url: String,
+    },
+    TokenHostMismatch {
+        url: String,
+    },
+    /// Credentials were offered and the server kept rejecting them.
+    Rejected {
+        url: String,
+    },
+}
+
 pub struct GitContext {
     pub account_id: Option<Uuid>,
+    /// Account label for error messages.
+    pub account_label: Option<String>,
     pub host: GitHostType,
     /// Hostname the token may be sent to.
     pub token_host: Option<String>,
@@ -44,6 +70,8 @@ pub struct GitContext {
     ssh_passphrase: Option<Secret>,
     /// Secrets could not be read because the fallback vault is locked.
     secrets_locked: bool,
+    /// Set by the credential callback; read by [`GitContext::explain`].
+    auth_problem: Mutex<Option<AuthProblem>>,
 }
 
 impl GitContext {
@@ -52,6 +80,7 @@ impl GitContext {
     pub fn anonymous() -> Self {
         Self {
             account_id: None,
+            account_label: None,
             host: GitHostType::Local,
             token_host: None,
             identity: None,
@@ -62,6 +91,7 @@ impl GitContext {
             token: None,
             ssh_passphrase: None,
             secrets_locked: false,
+            auth_problem: Mutex::new(None),
         }
     }
 
@@ -86,6 +116,7 @@ impl GitContext {
 
         Ok(Self {
             account_id: Some(account.id),
+            account_label: Some(account.label.clone()),
             host: account.host,
             token_host: account.remote_host(),
             identity: Some(account.identity.clone()),
@@ -93,6 +124,7 @@ impl GitContext {
             token,
             ssh_passphrase,
             secrets_locked,
+            auth_problem: Mutex::new(None),
         })
     }
 
@@ -121,17 +153,20 @@ impl GitContext {
         let attempts = Cell::new(0usize);
 
         callbacks.credentials(move |url, username_from_url, allowed| {
+            let fail = |problem: AuthProblem| {
+                let msg = self.describe(&problem);
+                if let Ok(mut slot) = self.auth_problem.lock() {
+                    *slot = Some(problem);
+                }
+                Err(git2::Error::from_str(&msg))
+            };
+
             let n = attempts.get() + 1;
             attempts.set(n);
             if n > MAX_AUTH_ATTEMPTS {
-                let hint = if self.secrets_locked {
-                    "; the secret vault is locked"
-                } else {
-                    ""
-                };
-                return Err(git2::Error::from_str(&format!(
-                    "authentication failed for {url} after {MAX_AUTH_ATTEMPTS} attempts{hint}"
-                )));
+                return fail(AuthProblem::Rejected {
+                    url: url.to_owned(),
+                });
             }
 
             if allowed.contains(CredentialType::SSH_KEY) {
@@ -147,26 +182,32 @@ impl GitContext {
                 if self.ssh.use_agent {
                     return Cred::ssh_key_from_agent(user);
                 }
-                return Err(git2::Error::from_str(
-                    "no SSH key configured for this account",
-                ));
+                return fail(AuthProblem::NoSshKey {
+                    url: url.to_owned(),
+                });
             }
 
             if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
                 if !self.token_allowed_for(url) {
-                    return Err(git2::Error::from_str(&format!(
-                        "refusing to send this account's token to {url}: host does not match the account"
-                    )));
+                    return fail(AuthProblem::TokenHostMismatch {
+                        url: url.to_owned(),
+                    });
                 }
                 if let Some(token) = &self.token {
-                    return Cred::userpass_plaintext(self.host.https_token_username(), token.as_str());
+                    return Cred::userpass_plaintext(
+                        self.host.https_token_username(),
+                        token.as_str(),
+                    );
                 }
-                let reason = if self.secrets_locked {
-                    "the secret vault is locked"
+                return fail(if self.secrets_locked {
+                    AuthProblem::VaultLocked {
+                        url: url.to_owned(),
+                    }
                 } else {
-                    "no access token stored for this account"
-                };
-                return Err(git2::Error::from_str(reason));
+                    AuthProblem::MissingToken {
+                        url: url.to_owned(),
+                    }
+                });
             }
 
             if allowed.contains(CredentialType::USERNAME) {
@@ -177,6 +218,60 @@ impl GitContext {
         });
 
         callbacks
+    }
+
+    fn label(&self) -> String {
+        match &self.account_label {
+            Some(l) => format!("the account \u{201c}{l}\u{201d}"),
+            None => "this workspace (no account)".into(),
+        }
+    }
+
+    /// Actionable, user-facing explanation of an authentication problem.
+    pub fn describe(&self, problem: &AuthProblem) -> String {
+        let who = self.label();
+        match problem {
+            AuthProblem::MissingToken { url } => format!(
+                "{url} requires authentication (private repository?), but {who} has no access token. \
+                 Add a token in the account settings (Edit account), or clone over SSH."
+            ),
+            AuthProblem::VaultLocked { url } => format!(
+                "{url} requires authentication, but the secret vault is locked, so the token of {who} \
+                 cannot be read. Unlock the vault and try again."
+            ),
+            AuthProblem::NoSshKey { url } => format!(
+                "{url} requires an SSH key, but {who} has no SSH key configured and ssh-agent use is off. \
+                 Set a key in the account settings (Edit account)."
+            ),
+            AuthProblem::TokenHostMismatch { url } => format!(
+                "{url} is not on the host of {who}{}, so its token is not sent there. \
+                 Use a workspace bound to an account on that host, or a public URL.",
+                self.token_host.as_deref().map(|h| format!(" ({h})")).unwrap_or_default()
+            ),
+            AuthProblem::Rejected { url } => format!(
+                "{url} rejected the credentials of {who}. Check that the access token is valid and has \
+                 the `repo` (GitHub) or `read_repository` (GitLab) scope, or that the SSH key is \
+                 registered with the host."
+            ),
+        }
+    }
+
+    /// Converts a libgit2 error from an operation that used this context's
+    /// callbacks into an [`AppError`], turning authentication failures into
+    /// [`AppError::AuthRequired`] with an explanation.
+    pub fn explain(&self, e: git2::Error) -> AppError {
+        let recorded = self.auth_problem.lock().ok().and_then(|mut p| p.take());
+        if let Some(problem) = recorded {
+            return AppError::AuthRequired(self.describe(&problem));
+        }
+        if e.code() == git2::ErrorCode::Auth {
+            return AppError::AuthRequired(format!(
+                "authentication failed for {}: {}",
+                self.label(),
+                e.message()
+            ));
+        }
+        AppError::Git(e)
     }
 
     pub fn fetch_options(&self) -> FetchOptions<'_> {
@@ -284,6 +379,7 @@ mod tests {
     fn ctx(host: GitHostType, token_host: &str) -> GitContext {
         GitContext {
             account_id: Some(Uuid::new_v4()),
+            account_label: Some("Work".into()),
             host,
             token_host: Some(token_host.into()),
             identity: Some(GitIdentity {
@@ -297,6 +393,7 @@ mod tests {
             token: Some(Zeroizing::new("tok".into())),
             ssh_passphrase: None,
             secrets_locked: false,
+            auth_problem: Mutex::new(None),
         }
     }
 
@@ -315,5 +412,31 @@ mod tests {
         let cmd = c.ssh_command().expect("key configured");
         assert!(cmd.contains("IdentitiesOnly=yes"));
         assert!(cmd.contains("\"/keys/id work\""));
+    }
+
+    #[test]
+    fn auth_problems_are_explained_with_the_account() {
+        let mut c = ctx(GitHostType::GitHub, "github.com");
+        c.token = None;
+        let msg = c.describe(&AuthProblem::MissingToken {
+            url: "https://github.com/acme/private.git".into(),
+        });
+        assert!(
+            msg.contains("\u{201c}Work\u{201d}") && msg.contains("no access token"),
+            "{msg}"
+        );
+
+        // A recorded problem turns the generic libgit2 error into AuthRequired.
+        *c.auth_problem.lock().expect("lock") = Some(AuthProblem::MissingToken {
+            url: "https://github.com/acme/private.git".into(),
+        });
+        let err = c.explain(git2::Error::from_str("whatever libgit2 says"));
+        assert_eq!(err.kind(), "authRequired");
+        assert!(
+            !err.to_string().starts_with("git error"),
+            "no internal prefix: {err}"
+        );
+        // Consumed: a later unrelated error stays a git error.
+        assert_eq!(c.explain(git2::Error::from_str("x")).kind(), "git");
     }
 }

@@ -271,6 +271,7 @@ export type AppErrorKind =
   | "stale"
   | "unsupported"
   | "remote"
+  | "authRequired"
   | "cancelled"
   | "process"
   | "internal";

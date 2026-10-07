@@ -1,14 +1,16 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
+import { ErrorText } from "./ErrorText";
 import { Button, Field, inputClass, Modal } from "./Modal";
 import { api, errorMessage, IpcError } from "../lib/ipc";
 import { formatShortcut } from "../lib/platform";
-import type { BootstrapState, PlatformInfo, SettingsView } from "../types/models";
+import type { AccountStatus, AccountView, BootstrapState, PlatformInfo, SettingsView } from "../types/models";
 
-type Section = "security" | "cloning" | "about";
+type Section = "accounts" | "security" | "cloning" | "about";
 
 const SECTIONS: Array<[Section, string]> = [
+  ["accounts", "Accounts"],
   ["security", "Security"],
   ["cloning", "Cloning"],
   ["about", "About"],
@@ -18,6 +20,9 @@ export const SETTINGS_SHORTCUT = "Mod+,";
 
 export interface SettingsDialogProps {
   platform: PlatformInfo;
+  accounts: AccountView[];
+  onEditAccount: (accountId: string) => void;
+  onAddAccount: () => void;
   /** Current lock state from the app; settings re-read when it changes. */
   vaultLocked: boolean;
   /** Called with fresh app state after the vault was locked or unlocked. */
@@ -33,7 +38,7 @@ export interface SettingsDialogProps {
  * unlocked.
  */
 export function SettingsDialog(props: SettingsDialogProps) {
-  const [section, setSection] = useState<Section>("security");
+  const [section, setSection] = useState<Section>("accounts");
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,8 +79,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <p className="mt-6 px-4 text-[11px] text-fg-muted/70">{formatShortcut(SETTINGS_SHORTCUT)}</p>
         </nav>
         <div className="min-w-0 flex-1 space-y-4 px-5 py-4">
-          {error && <p className="text-xs text-rose-400">{error}</p>}
+          {error && <ErrorText>{error}</ErrorText>}
           {!settings && !error && <p className="text-xs text-fg-muted">Loading…</p>}
+          {section === "accounts" && (
+            <AccountsSection accounts={props.accounts} onEdit={props.onEditAccount} onAdd={props.onAddAccount} />
+          )}
           {settings && section === "security" && (
             <SecuritySection
               settings={settings}
@@ -98,6 +106,56 @@ function SectionTitle({ children, hint }: { children: ReactNode; hint?: string }
       <h3 className="text-sm font-semibold text-fg">{children}</h3>
       {hint && <p className="mt-0.5 text-xs text-fg-muted">{hint}</p>}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Accounts
+// ---------------------------------------------------------------------------
+
+const HOST_LABEL: Record<AccountView["host"], string> = {
+  gitHub: "GitHub",
+  gitLabCloud: "GitLab.com",
+  gitLabSelfHosted: "GitLab (self-hosted)",
+  local: "Local",
+};
+
+const STATUS: Record<AccountStatus, [string, string]> = {
+  ready: ["Token stored", "text-emerald-400"],
+  missingToken: ["No token", "text-amber-300"],
+  locked: ["Vault locked", "text-fg-muted"],
+};
+
+function AccountsSection(props: { accounts: AccountView[]; onEdit: (id: string) => void; onAdd: () => void }) {
+  return (
+    <>
+      <SectionTitle hint="Saved connections: host, access token, SSH key and commit identity.">Accounts</SectionTitle>
+      {props.accounts.length === 0 && <p className="text-xs text-fg-muted">No accounts yet.</p>}
+      <ul className="divide-y divide-line rounded-md border border-line">
+        {props.accounts.map((a) => {
+          const [label, color] = a.host === "local" ? ["No token needed", "text-fg-muted"] : STATUS[a.status];
+          return (
+            <li key={a.id} className="flex items-center gap-3 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-fg">{a.label}</div>
+                <div className="truncate text-[11px] text-fg-muted">
+                  {HOST_LABEL[a.host]}
+                  {a.host === "gitLabSelfHosted" && a.apiBaseUrl ? ` · ${a.apiBaseUrl}` : ""} · {a.identity.email}
+                  {a.ssh.privateKeyPath ? " · SSH key" : a.ssh.useAgent ? " · ssh-agent" : ""}
+                </div>
+              </div>
+              <span className={clsx("shrink-0 text-[11px]", color)}>{label}</span>
+              <Button kind="ghost" onClick={() => props.onEdit(a.id)}>
+                Edit
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+      <Button kind="ghost" onClick={props.onAdd}>
+        + Add account
+      </Button>
+    </>
   );
 }
 
@@ -265,11 +323,14 @@ function ChangePasswordForm(props: { onChanged: (vault: SettingsView["vault"]) =
         <Button type="submit" disabled={!canSubmit}>
           {busy ? "Re-encrypting…" : "Change master password"}
         </Button>
-        {message && (
-          <span role="status" className={clsx("text-xs", message.ok ? "text-emerald-400" : "text-rose-400")}>
-            {message.text}
-          </span>
-        )}
+        {message &&
+          (message.ok ? (
+            <span role="status" className="text-xs text-emerald-400">
+              {message.text}
+            </span>
+          ) : (
+            <ErrorText className="min-w-0 flex-1">{message.text}</ErrorText>
+          ))}
       </div>
     </form>
   );
@@ -324,11 +385,14 @@ function CloningSection(props: { settings: SettingsView; onSaved: (s: SettingsVi
             Reset to default
           </Button>
         )}
-        {message && (
-          <span role="status" className={clsx("text-xs", message.ok ? "text-emerald-400" : "text-rose-400")}>
-            {message.text}
-          </span>
-        )}
+        {message &&
+          (message.ok ? (
+            <span role="status" className="text-xs text-emerald-400">
+              {message.text}
+            </span>
+          ) : (
+            <ErrorText className="min-w-0 flex-1">{message.text}</ErrorText>
+          ))}
       </div>
     </>
   );

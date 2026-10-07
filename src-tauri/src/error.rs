@@ -47,6 +47,11 @@ pub enum AppError {
     #[error("{0}")]
     Remote(String),
 
+    /// Credentials are missing or were rejected. The message names the
+    /// account and what to change; shown to the user verbatim.
+    #[error("{0}")]
+    AuthRequired(String),
+
     /// The user cancelled a long-running operation.
     #[error("operation cancelled")]
     Cancelled,
@@ -81,6 +86,7 @@ impl AppError {
             Self::Stale(_) => "stale",
             Self::Unsupported(_) => "unsupported",
             Self::Remote(_) => "remote",
+            Self::AuthRequired(_) => "authRequired",
             Self::Cancelled => "cancelled",
             Self::Process(_) => "process",
             Self::Internal(_) => "internal",

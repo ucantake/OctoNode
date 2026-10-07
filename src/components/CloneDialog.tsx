@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import clsx from "clsx";
+import { ErrorAction, ErrorText } from "./ErrorText";
 import { Button, Field, inputClass, Modal } from "./Modal";
 import { api, errorMessage, IpcError, onCloneProgress } from "../lib/ipc";
-import { cloneProgressFraction, describeProgress, folderNameFromUrl, newCloneId } from "../lib/clone";
+import {
+  accountHost,
+  cloneProgressFraction,
+  describeProgress,
+  folderNameFromUrl,
+  isHttpsUrl,
+  newCloneId,
+  urlHost,
+} from "../lib/clone";
 import { relativeTime } from "../lib/theme";
 import type { AccountView, CloneProgress, CloneResult, RemoteRepo, Workspace } from "../types/models";
 
@@ -22,6 +31,8 @@ export interface CloneDialogProps {
   /** The workspace's account; credentials and identity come from it. */
   account: AccountView | null;
   onCloned: (result: CloneResult) => void;
+  /** Opens the account editor (e.g. to add a missing token). */
+  onEditAccount: () => void;
   onClose: () => void;
 }
 
@@ -30,7 +41,7 @@ export interface CloneDialogProps {
  * GitHub/GitLab repositories, or paste any URL. The clone runs with the
  * workspace account's SSH key / token, reports progress and can be cancelled.
  */
-export function CloneDialog({ workspace, account, onCloned, onClose }: CloneDialogProps) {
+export function CloneDialog({ workspace, account, onCloned, onEditAccount, onClose }: CloneDialogProps) {
   const hasApi = account !== null && account.host !== "local";
   // Listing needs the account's token; without it, cloning by URL still works
   // (SSH key / agent, or public HTTPS).
@@ -52,7 +63,7 @@ export function CloneDialog({ workspace, account, onCloned, onClose }: CloneDial
 
   const [cloneId, setCloneId] = useState<string | null>(null);
   const [progress, setProgress] = useState<CloneProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ authRequired: boolean; text: string } | null>(null);
   const running = cloneId !== null;
 
   // Default parent folder from settings.
@@ -125,7 +136,10 @@ export function CloneDialog({ workspace, account, onCloned, onClose }: CloneDial
       });
       onCloned(result);
     } catch (err) {
-      setError(err instanceof IpcError && err.kind === "cancelled" ? "Clone cancelled." : errorMessage(err));
+      setError({
+        authRequired: err instanceof IpcError && err.kind === "authRequired",
+        text: err instanceof IpcError && err.kind === "cancelled" ? "Clone cancelled." : errorMessage(err),
+      });
     } finally {
       unlisten.current?.();
       unlisten.current = null;
@@ -136,6 +150,15 @@ export function CloneDialog({ workspace, account, onCloned, onClose }: CloneDial
   const cancel = () => {
     if (cloneId) void api.cancelClone(cloneId);
   };
+
+  // Warn before cloning when HTTPS auth can't possibly work.
+  const needsTokenWarning =
+    account !== null &&
+    account.status !== "ready" &&
+    isHttpsUrl(effectiveUrl) &&
+    urlHost(effectiveUrl) !== null &&
+    urlHost(effectiveUrl) === accountHost(account);
+  const editAction = account ? <ErrorAction onClick={onEditAccount}>Edit account</ErrorAction> : undefined;
 
   const sep = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
   const destination = parent && folder ? `${parent.replace(/[\\/]+$/, "")}${sep}${folder}` : "";
@@ -230,7 +253,9 @@ export function CloneDialog({ workspace, account, onCloned, onClose }: CloneDial
         {source === "url" && (
           <>
             {reposError && (
-              <p className="text-[11px] text-amber-300">Could not list repositories: {reposError}</p>
+              <ErrorText tone="warning" action={editAction}>
+                Could not list repositories: {reposError}
+              </ErrorText>
             )}
             {hasApi && account && account.status !== "ready" && (
               <p className="text-[11px] text-fg-muted">
@@ -314,7 +339,14 @@ export function CloneDialog({ workspace, account, onCloned, onClose }: CloneDial
             <p className="text-[11px] text-fg-muted">{progress ? describeProgress(progress) : "Connecting…"}</p>
           </div>
         )}
-        {error && <p className="text-xs text-rose-400">{error}</p>}
+        {needsTokenWarning && !error && (
+          <ErrorText tone="warning" action={editAction}>
+            {account?.status === "locked"
+              ? "The secret vault is locked, so this account's token can't be used. Private repositories over HTTPS will fail until you unlock it."
+              : `\u201c${account?.label}\u201d has no access token. Public repositories clone fine, but private ones over HTTPS need a token \u2014 add one, or use the SSH URL.`}
+          </ErrorText>
+        )}
+        {error && <ErrorText action={error.authRequired ? editAction : undefined}>{error.text}</ErrorText>}
       </form>
     </Modal>
   );

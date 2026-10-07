@@ -32,6 +32,7 @@ body {
   -webkit-font-smoothing: antialiased;
   /* Desktop app feel: no rubber-band scrolling / text selection on chrome. */
   overscroll-behavior: none;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -45,6 +46,15 @@ code,
 input,
 textarea,
 select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Opt-in selection for messages users need to copy (errors, paths). The
+   -webkit- prefix is required by WebKitGTK and WKWebView. */
+.selectable,
+.selectable * {
+  -webkit-user-select: text;
   user-select: text;
 }
 
