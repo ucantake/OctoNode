@@ -590,3 +590,26 @@ pub async fn cancel_clone(state: AppStateArc<'_>, clone_id: Uuid) -> AppResult<b
         None => false,
     })
 }
+
+/// Opens the repository's working folder in the OS file manager. The path is
+/// resolved from the saved workspace, never taken from the webview, so the
+/// UI cannot ask to open arbitrary locations.
+#[tauri::command]
+pub async fn open_repository_folder(
+    app: AppHandle,
+    state: AppStateArc<'_>,
+    repo_id: Uuid,
+) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let path = state.read_config(|c| Ok(c.resolve_repo(repo_id)?.0.path.clone()))?;
+    if !path.is_dir() {
+        return Err(AppError::InvalidInput(format!(
+            "the folder {} no longer exists; it may have been moved or deleted",
+            paths::display(&path)
+        )));
+    }
+    app.opener()
+        .open_path(paths::display(&path), None::<&str>)
+        .map_err(|e| AppError::Process(format!("could not open the file manager: {e}")))
+}
